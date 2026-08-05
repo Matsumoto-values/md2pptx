@@ -7,7 +7,7 @@ substitutions:
   _REGION: asia-northeast1
   _REPO: md2pptx                 # Artifact Registry のリポジトリ名
   _JOB: md2pptx-batch            # Cloud Run Jobs のジョブ名
-  _RUNTIME_SA: ""                # ジョブ実行時のSA（空なら既定SA）
+  _RUNTIME_SA: ""                # ジョブ実行時のSA（空なら既定SA。ビルド用SAと兼用可）
   _MANIFEST: ""                  # gs://bucket/nightly/manifest.jsonl
   _OUT_PREFIX: ""                # gs://bucket/decks
   _TASKS: "4"

@@ -184,42 +184,47 @@ gcloud scheduler jobs create http md2pptx-nightly \
 ```bash
 PROJECT_ID=$(gcloud config get-value project)
 REGION=asia-northeast1
+BUCKET=YOUR_BUCKET
 
 # 1. Artifact Registry
 gcloud artifacts repositories create md2pptx \
   --repository-format=docker --location=$REGION
 
-# 2. ビルド実行用SA（Cloud Buildが使う）
-gcloud iam service-accounts create md2pptx-build --display-name="md2pptx build"
-BUILD_SA=md2pptx-build@$PROJECT_ID.iam.gserviceaccount.com
+# 2. サービスアカウント（ビルドとジョブ実行を兼用する1つ）
+gcloud iam service-accounts create md2pptx --display-name="md2pptx"
+SA=md2pptx@$PROJECT_ID.iam.gserviceaccount.com
+
 for ROLE in roles/logging.logWriter \
             roles/artifactregistry.writer \
-            roles/run.admin \
-            roles/iam.serviceAccountUser; do
+            roles/run.admin; do
   gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$BUILD_SA" --role="$ROLE"
+    --member="serviceAccount:$SA" --role="$ROLE"
 done
 
-# 3. ジョブ実行用SA（バッチが使う。GCSの読み書きだけ）
-gcloud iam service-accounts create md2pptx-job --display-name="md2pptx job"
-JOB_SA=md2pptx-job@$PROJECT_ID.iam.gserviceaccount.com
-gsutil iam ch serviceAccount:$JOB_SA:objectAdmin gs://YOUR_BUCKET
+# ジョブに自分自身をSAとして設定するため、自分に対する actAs 権限が必要。
+# プロジェクト全体ではなくこのSA自身にだけ付けて範囲を絞る
+gcloud iam service-accounts add-iam-policy-binding $SA \
+  --member="serviceAccount:$SA" --role=roles/iam.serviceAccountUser
 
-# 4. GitHubリポジトリを接続（初回はブラウザ認可が必要）
+# GCSはバケット単位で付与（プロジェクト全体のストレージ権限は与えない）
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
+  --member="serviceAccount:$SA" --role=roles/storage.objectAdmin
+
+# 3. GitHubリポジトリを接続（初回はブラウザ認可が必要）
 gcloud builds connections create github md2pptx-gh --region=$REGION
 gcloud builds repositories create md2pptx \
   --remote-uri=https://github.com/OWNER/md2pptx.git \
   --connection=md2pptx-gh --region=$REGION
 
-# 5. トリガー作成（--service-account の指定は必須）
+# 4. トリガー作成（--service-account の指定は必須）
 gcloud builds triggers create github \
   --name=md2pptx-main \
   --region=$REGION \
   --repository=projects/$PROJECT_ID/locations/$REGION/connections/md2pptx-gh/repositories/md2pptx \
   --branch-pattern='^main$' \
   --build-config=cloudbuild.yaml \
-  --service-account=projects/$PROJECT_ID/serviceAccounts/$BUILD_SA \
-  --substitutions=_MANIFEST=gs://YOUR_BUCKET/nightly/manifest.jsonl,_OUT_PREFIX=gs://YOUR_BUCKET/decks,_RUNTIME_SA=$JOB_SA
+  --service-account=projects/$PROJECT_ID/serviceAccounts/$SA \
+  --substitutions=_MANIFEST=gs://$BUCKET/nightly/manifest.jsonl,_OUT_PREFIX=gs://$BUCKET/decks,_RUNTIME_SA=$SA
 ```
 
 **`--service-account` を省略できない理由**: Cloud Build の既定SAが
@@ -227,6 +232,16 @@ Compute Engine の既定SAに変わっており、そこには Cloud Build Servi
 ロールが含まれていない。レガシーSAが有効な古いプロジェクトを除き、
 トリガー作成/更新時にSAの明示指定が必要。
 またユーザー指定SAで実行する場合、`options.logging: CLOUD_LOGGING_ONLY` が必須。
+
+**1つのSAを兼用する場合の権限集中について**: このSAはビルド時の権限
+（イメージのpush、Jobsのデプロイ）と実行時の権限（GCSの読み書き）の両方を持つ。
+つまりジョブ側から自分を再デプロイすることも技術的には可能になる。
+加えて Cloud Build トリガーの性質上、**リポジトリへの書き込み権限を持つ人は
+このSAの権限で任意のコードを実行できる**（pushでトリガーが起動するため）。
+権限を分離したい場合は、ビルド用SA（`artifactregistry.writer` / `run.admin` /
+`logging.logWriter` / 対象SAへの `iam.serviceAccountUser`）と
+ジョブ実行用SA（対象バケットへの `storage.objectAdmin` のみ）に分け、
+トリガーの `_RUNTIME_SA` に後者を渡す。
 
 #### CIが検証する内容（`tests/pptx_check.py`）
 
