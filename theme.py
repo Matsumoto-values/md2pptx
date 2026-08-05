@@ -12,7 +12,13 @@ THEMES_DIR = pathlib.Path(__file__).parent / "themes"
 
 DEFAULTS = {
     "canvas": {"w": 1280, "h": 720, "slide_in": [13.333, 7.5]},
-    "font": "Noto Sans JP",
+    # font       : pptxに書き込むフォント名（＝閲覧者のPowerPointが探す名前）
+    # font_stack : CSSに書くフォント指定（＝描画側で実際に使われるフォント）
+    # この2つは「同じ物理フォントに解決されること」が必須。ズレるとブラウザの実測値が
+    # PowerPointで通用せず、折り返しがズレる。BIZ UDPGothicはWindows標準搭載かつ
+    # SIL OFLなのでLinux側にも入れられ、両者を一致させられる。
+    "font": "BIZ UDPGothic",
+    "font_stack": ["BIZ UDPGothic", "Noto Sans CJK JP", "sans-serif"],
     "palette": ["4C6FFF", "12B5A5", "F5A524", "E5484D", "8E4EC6"],
     "text": "333333",
     "heading": "1B1B1F",

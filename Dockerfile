@@ -1,10 +1,13 @@
 # Chromiumと依存ライブラリが入った公式イメージ。自前で apt する地獄を避ける
-FROM mcr.microsoft.com/playwright/python:v1.56.0-noble
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
 
-# 日本語フォントは必須。無いと全部豆腐(□)になる
-# ここで焼き込むフォントは「閲覧者のPCにも入っているもの」を選ぶこと
+# 日本語フォントは必須。無いと全部豆腐(□)になる。
+# BIZ UDGothic は Windows 10 1809以降/11 に標準搭載 かつ SIL OFL なので、
+# 描画側(ここ)と閲覧側(顧客のPowerPoint)で同じ物理フォントになる。
+# これによりブラウザの実測値がPowerPointでもそのまま通用する。
+# Noto CJK はフォールバック用（BIZ UDに無い字形の保険）。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        fonts-noto-cjk fonts-noto-cjk-extra \
+        fonts-morisawa-bizud-gothic fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* && fc-cache -f
 
 WORKDIR /app

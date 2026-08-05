@@ -28,13 +28,14 @@ import theme as theme_mod
 def css(T):
     tb, c = T["table"], T["canvas"]
     m = T["margin"]
+    stack = ",".join(f"'{f}'" if " " in f else f for f in T["font_stack"])
     var = "".join(f"--pal{i}:#{p};" for i, p in enumerate(T["palette"]))
     zebra = (f'[data-pptx="table"] tbody tr:nth-child(even) td '
              f'{{ background:#{tb["row_alt_bg"]}; }}') if tb["zebra"] else ""
     return f"""
 :root {{ {var} --text:#{T['text']}; --head:#{T['heading']}; }}
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ background:#4a4a4a; font-family:'{T['font']}','Helvetica Neue',sans-serif; }}
+body {{ background:#4a4a4a; font-family:{stack}; }}
 .slide {{ position:relative; width:{c['w']}px; height:{c['h']}px;
   background:#fff; overflow:hidden; margin:0 auto 24px; }}
 .slide > .body {{ position:absolute; left:{m['x']}px; top:{m['body_top']}px;

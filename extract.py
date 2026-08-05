@@ -77,13 +77,35 @@ COLLECT_JS = """
 """
 
 
-async def extract(browser, html, canvas=(1280, 720)):
+# 指定フォントが実際に使われたかを幅比較で判定する。
+# document.fonts.check はシステムフォントに対して信用できないため canvas で実測する
+FONT_PROBE_JS = """
+(family) => {
+  const c = document.createElement('canvas').getContext('2d');
+  const probe = '日本語Wwmiil 0123';
+  c.font = '40px monospace';
+  const base = c.measureText(probe).width;
+  c.font = '40px "' + family + '", monospace';
+  const test = c.measureText(probe).width;
+  return Math.abs(test - base) > 0.5;
+}
+"""
+
+
+async def extract(browser, html, canvas=(1280, 720), font=None):
     w, h = canvas
     page = await browser.new_page(viewport={"width": w, "height": h},
                                  device_scale_factor=2)
     try:
         await page.set_content(html, wait_until="load")
         await page.wait_for_timeout(150)          # webfont適用待ち
+        font_ok = None
+        if font:
+            font_ok = await page.evaluate(FONT_PROBE_JS, font)
+            if not font_ok:
+                # 意図したフォントで測れていない = 座標が全部信用できない状態
+                print(f"WARNING: font '{font}' is not available; "
+                      f"measurements fell back to another font", file=sys.stderr)
         slides = []
         for handle in await page.query_selector_all("section.slide"):
             elems = await handle.evaluate(COLLECT_JS)
@@ -92,7 +114,8 @@ async def extract(browser, html, canvas=(1280, 720)):
                 if e["kind"] == "raster":
                     e["png_b64"] = base64.b64encode(await cell.screenshot()).decode()
             slides.append({"w": w, "h": h, "elements": elems})
-        return {"canvas": [w, h], "slides": slides}
+        return {"canvas": [w, h], "font": font, "font_ok": font_ok,
+                "slides": slides}
     finally:
         await page.close()
 
@@ -123,17 +146,20 @@ class BrowserPool:
     def alive(self):
         return bool(self._browser and self._browser.is_connected())
 
-    async def extract(self, html, canvas):
+    async def extract(self, html, canvas, font=None):
         async with self._sem:
-            return await extract(self._browser, html, canvas)
+            return await extract(self._browser, html, canvas, font)
 
 
 async def main():
     html = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+    import theme as theme_mod
+    T = theme_mod.load()
     pool = BrowserPool()
     await pool.start()
     try:
-        layout = await pool.extract(html, (1280, 720))
+        layout = await pool.extract(html, (T["canvas"]["w"], T["canvas"]["h"]),
+                                    T["font"])
     finally:
         await pool.stop()
     json.dump(layout, sys.stdout, ensure_ascii=False, indent=1)

@@ -1,8 +1,12 @@
-fastapi==0.141.1
-uvicorn[standard]==0.40.0
-pydantic==2.12.3
-python-pptx==1.0.2
-playwright==1.56.0
-PyYAML==6.0.2
-Pillow==11.4.0
-google-cloud-storage==3.4.1
+# 実行時依存。厳密な固定は `uv pip compile requirements.txt -o requirements.lock` で行う
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+pydantic>=2.9,<3.0
+python-pptx>=1.0.2,<2.0
+PyYAML>=6.0,<7.0
+Pillow>=11.0                 # extract_stub のダミー画像生成にのみ使用
+google-cloud-storage>=2.18,<4.0
+
+# Dockerfile のベースイメージタグ(v1.62.0-noble)と必ず一致させること。
+# ズレると playwright が「ブラウザが見つからない」で落ちる
+playwright==1.62.0
