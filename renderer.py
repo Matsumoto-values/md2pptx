@@ -7,16 +7,20 @@ HTTPサービス(app.py)とバッチジョブ(job.py)の両方がここを呼ぶ
   - バッチ: 1回の起動で全件使い回して終了時に閉じる（コールドスタートをN件で割る）
 """
 import io
+import logging
 
 import build_pptx
 import md2html
 from extract import BrowserPool
 from extract_stub import extract_stub
 
+log = logging.getLogger("renderer")
+
 
 class Renderer:
     def __init__(self, backend="browser", max_pages=4):
         self.backend = backend
+        self._font_warned = False
         self.pool = BrowserPool(max_pages=max_pages) if backend == "browser" else None
 
     async def __aenter__(self):
@@ -36,7 +40,13 @@ class Renderer:
         html = md2html.to_html(markdown, T)
         canvas = (T["canvas"]["w"], T["canvas"]["h"])
         if self.pool:
-            return html, await self.pool.extract(html, canvas)
+            lay = await self.pool.extract(html, canvas, T["font"])
+            if lay.get("font_ok") is False and not self._font_warned:
+                # 座標が意図しないフォントで測られている = 全スライドが信用できない
+                self._font_warned = True
+                log.warning("font '%s' unavailable; layout measured with a fallback "
+                            "font. install it or fix theme.font_stack", T["font"])
+            return html, lay
         return html, extract_stub(html, canvas, T)
 
     async def render(self, markdown, T):

@@ -22,19 +22,21 @@ import sys
 
 import yaml
 
+import chart_svg
 import theme as theme_mod
 
 
 def css(T):
     tb, c = T["table"], T["canvas"]
     m = T["margin"]
+    stack = ",".join(f"'{f}'" if " " in f else f for f in T["font_stack"])
     var = "".join(f"--pal{i}:#{p};" for i, p in enumerate(T["palette"]))
     zebra = (f'[data-pptx="table"] tbody tr:nth-child(even) td '
              f'{{ background:#{tb["row_alt_bg"]}; }}') if tb["zebra"] else ""
     return f"""
 :root {{ {var} --text:#{T['text']}; --head:#{T['heading']}; }}
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ background:#4a4a4a; font-family:'{T['font']}','Helvetica Neue',sans-serif; }}
+body {{ background:#4a4a4a; font-family:{stack}; }}
 .slide {{ position:relative; width:{c['w']}px; height:{c['h']}px;
   background:#fff; overflow:hidden; margin:0 auto 24px; }}
 .slide > .body {{ position:absolute; left:{m['x']}px; top:{m['body_top']}px;
@@ -95,15 +97,16 @@ def render_table(rows):
             f"<thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table>")
 
 
-def render_chart(spec_text):
+def render_chart(spec_text, T):
     spec = yaml.safe_load(spec_text)
     attr = html_mod.escape(json.dumps(spec, ensure_ascii=False), quote=True)
-    # canvas はプレビュー用の使い捨て。PPTX側は data-chart の数値だけを見る
+    # 中のSVGはプレビュー用の使い捨て。PPTX側は data-chart の数値だけを見る。
+    # 実測されるのは外側のdivの矩形だけなので、中身の描画は成果物に影響しない
     return (f'<div data-pptx="chart" data-chart="{attr}">'
-            f'<canvas class="preview"></canvas></div>')
+            f'{chart_svg.render(spec, T)}</div>')
 
 
-def render_slide(lines):
+def render_slide(lines, T):
     out, buf_list, buf_tbl, buf_chart = [], [], [], None
     title = ""
 
@@ -120,7 +123,7 @@ def render_slide(lines):
         s = line.strip()
         if buf_chart is not None:
             if s == "```":
-                out.append(render_chart("\n".join(buf_chart)))
+                out.append(render_chart("\n".join(buf_chart), T))
                 buf_chart = None
             else:
                 buf_chart.append(line)
@@ -149,7 +152,7 @@ def render_slide(lines):
 
 
 def to_html(markdown, T):
-    body = "\n".join(render_slide(s) for s in parse_slides(markdown))
+    body = "\n".join(render_slide(s, T) for s in parse_slides(markdown))
     return f"<!doctype html><meta charset='utf-8'><style>{css(T)}</style>\n{body}"
 
 
