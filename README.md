@@ -213,7 +213,7 @@ gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
 # 3. GitHubリポジトリを接続（初回はブラウザ認可が必要）
 gcloud builds connections create github md2pptx-gh --region=$REGION
 gcloud builds repositories create md2pptx \
-  --remote-uri=https://github.com/OWNER/md2pptx.git \
+  --remote-uri=https://github.com/Matsumoto-values/md2pptx.git \
   --connection=md2pptx-gh --region=$REGION
 
 # 4. トリガー作成（--service-account の指定は必須）
