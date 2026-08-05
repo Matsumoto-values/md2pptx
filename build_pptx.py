@@ -17,6 +17,7 @@ from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
@@ -36,6 +37,9 @@ STACKED = {"column_stacked"}
 LEGEND_POS = {"bottom": XL_LEGEND_POSITION.BOTTOM, "top": XL_LEGEND_POSITION.TOP,
               "right": XL_LEGEND_POSITION.RIGHT, "left": XL_LEGEND_POSITION.LEFT}
 LN_TAGS = ("a:lnL", "a:lnR", "a:lnT", "a:lnB")   # tcPr内での正しい出現順
+SHAPE_MAP = {"rounded_rect": MSO_SHAPE.ROUNDED_RECTANGLE, "rect": MSO_SHAPE.RECTANGLE,
+             "diamond": MSO_SHAPE.DIAMOND, "oval": MSO_SHAPE.OVAL,
+             "chevron": MSO_SHAPE.CHEVRON}
 
 
 def rgb(css):
@@ -150,6 +154,77 @@ def add_table(slide, e, px, T):
             p.runs[0].text = c["text"]
 
 
+def add_autoshape(slide, e, px, T):
+    """フローチャートのボックス。ネイティブのオートシェイプなので手で編集できる."""
+    sh = slide.shapes.add_shape(SHAPE_MAP.get(e.get("shape"), MSO_SHAPE.ROUNDED_RECTANGLE),
+                               *box(e, px))
+    # 角の丸みをCSSのborder-radiusに合わせる(既定値は箱の高さの16.7%で丸すぎる)
+    try:
+        if e.get("radius") and len(sh.adjustments):
+            sh.adjustments[0] = min(0.5, e["radius"] / min(e["w"], e["h"]))
+    except (IndexError, ValueError):
+        pass
+
+    if is_transparent(e.get("bg")):
+        sh.fill.background()
+    else:
+        sh.fill.solid()
+        sh.fill.fore_color.rgb = rgb(e["bg"])
+    if e.get("borderW"):
+        sh.line.color.rgb = rgb(e.get("borderColor"))
+        sh.line.width = Pt(e["borderW"] * 0.75)
+    else:
+        sh.line.fill.background()
+
+    tf = sh.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    pad = e.get("pad") or [0, 0, 0, 0]
+    for attr, v in zip(("margin_top", "margin_right", "margin_bottom", "margin_left"),
+                       pad):
+        setattr(tf, attr, Emu(int(v * px)))
+    for i, ln in enumerate(e.get("lines") or [{"text": e.get("text", "")}]):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = ALIGN.get(e.get("align"), PP_ALIGN.LEFT)
+        p.line_spacing = ln.get("lineHeight") or 1.3
+        style_run(p.add_run(), {**e, **ln}, T)
+        p.runs[0].text = ln["text"]
+    return sh
+
+
+def add_flow_connector(slide, e, px, T, nodes):
+    """図形に「接続」した矢印。接続しておくと、PowerPointで箱を動かしても追従する.
+
+    単に線を置くだけでは動かした瞬間に矢印が取り残されるため、
+    手で調整する用途では begin_connect / end_connect が必須。
+    """
+    a, b = nodes.get(e.get("from")), nodes.get(e.get("to"))
+    if not (a and b):
+        return
+    if e.get("dir") == "vertical":
+        bi, ei = 2, 0                      # 下辺 -> 上辺
+        x1, y1 = a.left + a.width // 2, a.top + a.height
+        x2, y2 = b.left + b.width // 2, b.top
+    else:
+        bi, ei = 3, 1                      # 右辺 -> 左辺
+        x1, y1 = a.left + a.width, a.top + a.height // 2
+        x2, y2 = b.left, b.top + b.height // 2
+
+    conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, x1, y1, x2, y2)
+    conn.begin_connect(a, bi)
+    conn.end_connect(b, ei)
+
+    cfg = T["flow"]
+    conn.line.color.rgb = rgb(f"#{cfg['connector_color']}")
+    conn.line.width = Pt(cfg["connector_w"] * 0.75)
+    # 矢印の先端はpython-pptxにAPIが無いのでXMLを直挿しする。
+    # a:ln の子要素順序は fill -> prstDash -> ... -> headEnd -> tailEnd なので最後に足す
+    ln = conn.line._get_or_add_ln()
+    ln.append(ln.makeelement(qn("a:tailEnd"),
+                             {"type": "triangle", "w": "med", "len": "med"}))
+    return conn
+
+
 def add_chart(slide, e, px, T):
     spec, cfg = e["spec"], T["chart"]
     ctype = spec.get("type", "column")
@@ -207,10 +282,19 @@ def build(layout, out, T):
     blank = prs.slide_layouts[6]
     for s in layout["slides"]:
         slide = prs.slides.add_slide(blank)
+        # コネクタは接続先の図形が必要なので2パスにする
+        nodes, connectors = {}, []
         for e in s["elements"]:
-            fn = DISPATCH.get(e["kind"])
-            if fn:
-                fn(slide, e, px, T)
+            if e["kind"] == "shape":
+                nodes[e.get("node")] = add_autoshape(slide, e, px, T)
+            elif e["kind"] == "connector":
+                connectors.append(e)
+            else:
+                fn = DISPATCH.get(e["kind"])
+                if fn:
+                    fn(slide, e, px, T)
+        for e in connectors:
+            add_flow_connector(slide, e, px, T, nodes)
     prs.save(out)
     return out
 

@@ -30,6 +30,7 @@ def css(T):
     tb, c = T["table"], T["canvas"]
     m = T["margin"]
     stack = ",".join(f"'{f}'" if " " in f else f for f in T["font_stack"])
+    fl = T["flow"]
     var = "".join(f"--pal{i}:#{p};" for i, p in enumerate(T["palette"]))
     zebra = (f'[data-pptx="table"] tbody tr:nth-child(even) td '
              f'{{ background:#{tb["row_alt_bg"]}; }}') if tb["zebra"] else ""
@@ -60,6 +61,29 @@ body {{ background:#4a4a4a; font-family:{stack}; }}
 {zebra}
 [data-pptx="table"] td.num, [data-pptx="table"] th.num {{ text-align:right; }}
 [data-pptx="chart"] {{ width:1000px; height:380px; margin-bottom:18px; }}
+
+/* フローチャート: flexで並べてブラウザに寸法を測らせる。
+   ボックスは中の文字量に応じて自動サイズになる（python-pptx直書きでは不可能な部分） */
+.flow {{ display:flex; align-items:stretch; margin-bottom:18px; }}
+.flow-vertical {{ flex-direction:column; align-items:flex-start; }}
+[data-pptx="shape"] {{ display:flex; flex-direction:column; justify-content:center;
+  padding:{fl['box_pad'][0]}px {fl['box_pad'][1]}px {fl['box_pad'][2]}px {fl['box_pad'][3]}px;
+  border-radius:{fl['box_radius']}px; background:#{fl['box_bg']};
+  border:{fl['box_border_w']}px solid #{fl['box_border']};
+  min-width:{fl['box_min_w']}px; max-width:{fl['box_max_w']}px; }}
+.flow-vertical [data-pptx="shape"] {{ width:{fl['box_w_vertical']}px; max-width:none; }}
+[data-pptx="shape"] .cap {{ font-size:{fl['cap_size']}px; font-weight:700;
+  color:#{fl['cap_color']}; margin-bottom:4px; }}
+[data-pptx="shape"] .body {{ font-size:{fl['body_size']}px; line-height:1.5;
+  color:var(--text); }}
+[data-pptx="connector"] {{ flex:0 0 {fl['gap']}px; display:flex;
+  align-items:center; justify-content:center; }}
+.flow-vertical [data-pptx="connector"] {{ flex-basis:44px;
+  width:{fl['box_w_vertical']}px; }}
+/* 菱形は内接矩形が小さいので余白を増やす。ブラウザ上の表示は矩形のままだが、
+   PPTX側で菱形になった時に文字がはみ出さない寸法をここで確保する */
+.shape-diamond {{ padding:{fl['box_pad'][0] * 2}px {fl['box_pad'][1] * 2}px;
+  text-align:center; align-items:center; }}
 """
 
 
@@ -106,8 +130,58 @@ def render_chart(spec_text, T):
             f'{chart_svg.render(spec, T)}</div>')
 
 
+def arrow_svg(direction, T):
+    """プレビュー用の矢印。PPTX側は接続付きネイティブコネクタとして作り直される."""
+    c, w = T["flow"]["connector_color"], T["flow"]["connector_w"]
+    if direction == "vertical":
+        return (f'<svg width="24" height="40" viewBox="0 0 24 40">'
+                f'<line x1="12" y1="2" x2="12" y2="28" stroke="#{c}" '
+                f'stroke-width="{w}"/>'
+                f'<path d="M12,38 L6,26 L18,26 Z" fill="#{c}"/></svg>')
+    return (f'<svg width="48" height="24" viewBox="0 0 48 24">'
+            f'<line x1="2" y1="12" x2="34" y2="12" stroke="#{c}" stroke-width="{w}"/>'
+            f'<path d="M46,12 L32,6 L32,18 Z" fill="#{c}"/></svg>')
+
+
+def render_flow(spec_text, T):
+    """```flow ブロック -> flexで並んだボックス列 + コネクタ.
+
+    記法: 1行1ボックス。"見出し: 本文" と書くと見出しが小さく太字で乗る。
+          先頭行に "direction: vertical" を書くと縦並びになる。
+    """
+    direction = T["flow"]["direction"]
+    nodes = []
+    for line in spec_text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("direction:"):
+            direction = s.split(":", 1)[1].strip()
+            continue
+        shape = "rounded_rect"
+        if s.startswith("?"):
+            shape, s = "diamond", s[1:].strip()   # 行頭"?"は判断(菱形)
+        cap, _, body = s.partition(":")
+        nodes.append((cap.strip(), body.strip(), shape) if body.strip()
+                     else (None, cap.strip(), shape))
+
+    parts = []
+    for i, (cap, body, shape) in enumerate(nodes):
+        nid = f"n{i + 1}"
+        inner = (f'<span class="cap">{html_mod.escape(cap)}</span>' if cap else "")
+        inner += f'<span class="body">{html_mod.escape(body)}</span>'
+        parts.append(f'<div data-pptx="shape" data-shape="{shape}" '
+                     f'class="shape-{shape}" data-node="{nid}">{inner}</div>')
+        if i < len(nodes) - 1:
+            parts.append(f'<div data-pptx="connector" data-from="{nid}" '
+                         f'data-to="n{i + 2}" data-dir="{direction}">'
+                         f'{arrow_svg(direction, T)}</div>')
+    return f'<div class="flow flow-{direction}">{"".join(parts)}</div>'
+
+
 def render_slide(lines, T):
     out, buf_list, buf_tbl, buf_chart = [], [], [], None
+    buf_flow = None
     title = ""
 
     def flush():
@@ -128,8 +202,17 @@ def render_slide(lines, T):
             else:
                 buf_chart.append(line)
             continue
+        if buf_flow is not None:
+            if s == "```":
+                out.append(render_flow("\n".join(buf_flow), T))
+                buf_flow = None
+            else:
+                buf_flow.append(line)
+            continue
         if s.startswith("```chart"):
             flush(); buf_chart = []
+        elif s.startswith("```flow"):
+            flush(); buf_flow = []
         elif not s:
             flush()
         elif s.startswith("# "):

@@ -63,6 +63,25 @@ COLLECT_JS = """
           rectOf(td), styleOf(td)))
       }));
       e.colWidths = [...el.rows[0].cells].map(td => td.getBoundingClientRect().width);
+    } else if (kind === 'shape') {
+      e.shape = el.dataset.shape || 'rounded_rect';
+      e.node = el.dataset.node;
+      e.radius = px(getComputedStyle(el).borderTopLeftRadius);
+      e.borderW = px(getComputedStyle(el).borderTopWidth);
+      e.borderColor = getComputedStyle(el).borderTopColor;
+      // 見出しと本文でフォントが違うので行ごとにスタイルを採る
+      const spans = [...el.querySelectorAll('.cap,.body')];
+      e.lines = (spans.length ? spans : [el]).map(n => {
+        const cs = getComputedStyle(n);
+        return { text: n.innerText, size: px(cs.fontSize),
+                 bold: px(cs.fontWeight) >= 600, color: cs.color,
+                 lineHeight: px(cs.lineHeight) / (px(cs.fontSize) || 1) };
+      });
+    } else if (kind === 'connector') {
+      // 座標より「どの図形とどの図形を繋ぐか」が本質。PPTX側で接続して作り直す
+      e.from = el.dataset.from;
+      e.to = el.dataset.to;
+      e.dir = el.dataset.dir || 'horizontal';
     } else if (kind === 'chart') {
       // 数値はDOMから逆算できないので属性のJSONを唯一の正とする。外枠だけ実測
       e.spec = JSON.parse(el.dataset.chart);
