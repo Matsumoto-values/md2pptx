@@ -197,9 +197,12 @@ Chromium入りイメージは2GB前後あり、起動の大半はプロセス起
 - **`--no-sandbox --disable-dev-shm-usage`**: gVisor環境では必須（`extract.py` の `LAUNCH_ARGS`）
 - **`--workers 1` 固定**: ブラウザをプロセス内で共有するため。並列度はCloud Run側の
   concurrency で調整する。workers を増やすとブラウザがワーカー数分立ち上がってメモリが死ぬ
-- **フォント**: `fonts-noto-cjk` をイメージに焼く。無いと日本語が全部豆腐になる。
-  ただし**閲覧者のPCに無いフォントは開いた時に崩れる**ので、
-  B2B用途では游ゴシック・Meiryo など標準搭載フォントに寄せるのが安全
+- **フォント**: `fonts-morisawa-bizud-gothic` をイメージに焼く。
+  BIZ UDGothic は Windows 標準搭載かつ SIL OFL なので、
+  **描画側（Cloud Run）と閲覧側（顧客のPowerPoint）で同じ物理フォント**になり、
+  ブラウザの実測値がそのまま通用する。
+  ローカル検証時は `sudo apt install fonts-morisawa-bizud-gothic`。
+  フォントが解決できない場合は `extract.py` が警告を出す（黙って座標が狂うのを防ぐため）
 - **バッチ側は枚数制限を気にしなくてよい**（`--task-timeout` が効くだけ）。
   Service側の `MAX_SLIDES` はリクエストタイムアウト対策
 - **CPUバウンド処理**（python-pptx）は `run_in_threadpool` に投げてイベントループを塞がない
