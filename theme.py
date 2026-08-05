@@ -30,6 +30,15 @@ DEFAULTS = {
               "pad": [12, 16, 12, 16], "zebra": True},
     "chart": {"gap_width": 60, "data_labels": True, "legend": "bottom",
               "gridlines": True},
+    "flow": {
+        "direction": "horizontal",   # horizontal | vertical
+        "box_bg": "F2F5FF", "box_border": "4C6FFF", "box_border_w": 2,
+        "box_radius": 12, "box_pad": [16, 20, 16, 20],
+        "box_min_w": 200, "box_max_w": 340, "box_w_vertical": 420,
+        "cap_color": "4C6FFF", "cap_size": 14, "body_size": 20,
+        "gap": 56, "connector_color": "8A8F98", "connector_w": 2,
+        "group": False,              # Trueで図全体を1グループにまとめる
+    },
     "number_format": "#,##0",
 }
 

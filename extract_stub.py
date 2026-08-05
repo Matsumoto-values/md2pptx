@@ -20,7 +20,8 @@ from PIL import Image, ImageDraw
 import theme as theme_mod
 
 SIZES = {"title": (44, 1.25, True), "text": (22, 1.6, False), "list": (24, 1.7, False),
-         "raster": (20, 1.2, True), "table": (20, 1.4, False), "chart": (20, 1.2, False)}
+         "raster": (20, 1.2, True), "table": (20, 1.4, False), "chart": (20, 1.2, False),
+         "shape": (20, 1.5, False), "connector": (20, 1.2, False)}
 
 
 def unesc(t):
@@ -94,6 +95,31 @@ def extract_stub(html, canvas, T):
                 spec = json.loads(html_mod.unescape(
                     re.search(r'data-chart="(.*?)"', attrs, re.S).group(1)))
                 e.update(x=m["x"], y=y, w=1000, h=380, spec=spec); y += 398
+            elif kind in ("shape", "connector"):
+                # 近似: 横並び固定。flowは実測前提の機能なのでstubでは配線確認のみ
+                fl = T["flow"]
+                prev = [x for x in elems if x["kind"] in ("shape", "connector")]
+                x = m["x"] + sum(p["w"] for p in prev)
+                if kind == "shape":
+                    cap = re.search(r'class="cap">(.*?)</span>', inner, re.S)
+                    body = re.search(r'class="body">(.*?)</span>', inner, re.S)
+                    lines = []
+                    if cap:
+                        lines.append(dict(text=unesc(cap.group(1)), size=fl["cap_size"],
+                                          bold=True, color=f"#{fl['cap_color']}",
+                                          lineHeight=1.3))
+                    lines.append(dict(text=unesc(body.group(1)) if body else unesc(inner),
+                                      size=fl["body_size"], bold=False,
+                                      color=f"#{T['text']}", lineHeight=1.5))
+                    e.update(x=x, y=y, w=fl["box_max_w"], h=96, shape="rounded_rect",
+                             node=re.search(r'data-node="(\w+)"', attrs).group(1),
+                             radius=fl["box_radius"], borderW=fl["box_border_w"],
+                             borderColor=f"#{fl['box_border']}", bg=f"#{fl['box_bg']}",
+                             pad=fl["box_pad"], lines=lines)
+                else:
+                    e.update(x=x, y=y + 36, w=fl["gap"], h=24,
+                             **{k: re.search(rf'data-{k}="([\w-]+)"', attrs).group(1)
+                                for k in ("from", "to", "dir")})
             elif kind == "raster":
                 text = unesc(inner)
                 e.update(x=m["x"], y=y + 8, w=min(width, 48 + len(text) * size),
@@ -108,6 +134,10 @@ def extract_stub(html, canvas, T):
                 h = round(size * lh)
                 e.update(x=m["x"], y=y, w=width, h=h, text=unesc(inner)); y += h + 18
             elems.append(e)
+        # flowの直後に続く要素のyを進める
+        for e in elems:
+            if e["kind"] == "shape":
+                y = max(y, e["y"] + e["h"] + 18)
         slides.append({"w": cw, "h": ch, "elements": elems})
     return {"canvas": [cw, ch], "slides": slides}
 
