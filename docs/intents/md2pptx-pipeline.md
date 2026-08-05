@@ -154,6 +154,21 @@ Chart.js 等を CDN から引くと、実行時に外部ネットワークへ依
 何行に折り返されるかで決まるが、python-pptx 直書きではそれを事前に知る方法がない。
 flexbox で並べてブラウザに測らせることで、ボックスが中身に応じた寸法になる。
 
+### D9. XMLの要素順序は機械のゲートで守る
+`tcPr` の `ln* → fill`、`a:ln` の `... → tailEnd` といった順序違反は、
+PowerPoint の「修復が必要です」ダイアログに直結する。これは顧客の信頼を
+直接損なう種類の不具合で、しかも**人間のレビューでは検出できない**
+（ファイルを開くまで分からず、開いた時にはもう遅い）。
+
+`tests/pptx_check.py` を CI のゲートに置き、Cloud Build の
+`ビルド → 検証 → push → デプロイ` の順で、検証に失敗したらデプロイしない構成とする。
+検証は**イメージの中でブラウザバックエンドを使って**実行するため、
+コンテナ内のフォント解決漏れも同時に捕まえられる。
+
+CI/CD は GitHub → Cloud Build → Artifact Registry → Cloud Run Jobs。
+トリガーにはサービスアカウントの明示指定が必要（既定SAがCompute Engineの
+既定SAに変わり、Cloud Build Service Account ロールを含まないため）。
+
 ## PoC で検証済みの事項
 
 - md（タイトル/本文/箇条書き/表/グラフ/装飾バッジ）→ 3枚のデッキ生成
@@ -261,7 +276,7 @@ WSL Ubuntu 24.04 / Python 3.13 / Playwright 1.62 / Chromium 151 で検証。
 | 0 | PoC | **完了** |
 | 1 | ブラウザバックエンドでの実機検証 | **完了**（WSL / 目視QA通過 / フォント不一致を発見し解決） |
 | 2 | テーマスキーマ確定 + スライドテンプレート集 | 自社ブランド1件 + 顧客1件のテーマが定義できる（フローチャートは実装済み） |
-| 3 | Cloud Run Jobs デプロイ + Scheduler 連携 | 夜間バッチが GCS 出力まで通る |
+| 3 | Cloud Run Jobs デプロイ + Scheduler 連携 | 夜間バッチが GCS 出力まで通る（cloudbuild.yaml とCI検証は実装済み、GCP側の設定が残り） |
 | 4 | 結合セル・散布図など要素の拡充 | 実案件で必要になったものから順に |
 | 5 | Agent SDK 側（composer）の設計 | 非構造入力 → md → QAループの自動化 |
 
@@ -281,4 +296,5 @@ Phase 1 で実際に露出したのはフォント解決の不一致だった（
 ## 参考
 
 - 実装詳細・デプロイ手順は `README.md`
-- 動作確認: `python3 tests/smoke_test.py`（ブラウザ不要）
+- 構造検証（CIゲート）: `python3 tests/pptx_check.py`（ブラウザ必要）
+- API配線の確認: `python3 tests/smoke_test.py`（ブラウザ不要）

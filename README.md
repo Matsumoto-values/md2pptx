@@ -174,6 +174,83 @@ gcloud scheduler jobs create http md2pptx-nightly \
   --http-method POST --oauth-service-account-email SA@PROJECT.iam.gserviceaccount.com
 ```
 
+### GitHub → Cloud Build で CI/CD する（推奨）
+
+`cloudbuild.yaml` が `ビルド → 構造検証 → push → Jobs更新` を実行する。
+**検証に失敗したらデプロイしない**。
+
+#### 初回だけ必要な準備
+
+```bash
+PROJECT_ID=$(gcloud config get-value project)
+REGION=asia-northeast1
+
+# 1. Artifact Registry
+gcloud artifacts repositories create md2pptx \
+  --repository-format=docker --location=$REGION
+
+# 2. ビルド実行用SA（Cloud Buildが使う）
+gcloud iam service-accounts create md2pptx-build --display-name="md2pptx build"
+BUILD_SA=md2pptx-build@$PROJECT_ID.iam.gserviceaccount.com
+for ROLE in roles/logging.logWriter \
+            roles/artifactregistry.writer \
+            roles/run.admin \
+            roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:$BUILD_SA" --role="$ROLE"
+done
+
+# 3. ジョブ実行用SA（バッチが使う。GCSの読み書きだけ）
+gcloud iam service-accounts create md2pptx-job --display-name="md2pptx job"
+JOB_SA=md2pptx-job@$PROJECT_ID.iam.gserviceaccount.com
+gsutil iam ch serviceAccount:$JOB_SA:objectAdmin gs://YOUR_BUCKET
+
+# 4. GitHubリポジトリを接続（初回はブラウザ認可が必要）
+gcloud builds connections create github md2pptx-gh --region=$REGION
+gcloud builds repositories create md2pptx \
+  --remote-uri=https://github.com/OWNER/md2pptx.git \
+  --connection=md2pptx-gh --region=$REGION
+
+# 5. トリガー作成（--service-account の指定は必須）
+gcloud builds triggers create github \
+  --name=md2pptx-main \
+  --region=$REGION \
+  --repository=projects/$PROJECT_ID/locations/$REGION/connections/md2pptx-gh/repositories/md2pptx \
+  --branch-pattern='^main$' \
+  --build-config=cloudbuild.yaml \
+  --service-account=projects/$PROJECT_ID/serviceAccounts/$BUILD_SA \
+  --substitutions=_MANIFEST=gs://YOUR_BUCKET/nightly/manifest.jsonl,_OUT_PREFIX=gs://YOUR_BUCKET/decks,_RUNTIME_SA=$JOB_SA
+```
+
+**`--service-account` を省略できない理由**: Cloud Build の既定SAが
+Compute Engine の既定SAに変わっており、そこには Cloud Build Service Account
+ロールが含まれていない。レガシーSAが有効な古いプロジェクトを除き、
+トリガー作成/更新時にSAの明示指定が必要。
+またユーザー指定SAで実行する場合、`options.logging: CLOUD_LOGGING_ONLY` が必須。
+
+#### CIが検証する内容（`tests/pptx_check.py`）
+
+**イメージの中で** ブラウザバックエンドを使って実行するため、
+コンテナ内のフォント解決も同時に検証される。
+
+- フォントが解決できているか（できていなければ座標が全部信用できない）
+- 全要素がスライド内に収まっているか（溢れ検出）
+- 罫線の `tcPr` 子要素順序が `ln* → fill` になっているか
+- コネクタが図形に接続されているか（`stCxn` / `endCxn`）
+- 矢印の先端があるか、`a:ln` の子要素順序が正しいか
+- 表・グラフの数、系列数、`vary_by_categories=False`
+
+**XMLの要素順序違反は PowerPoint の「修復が必要です」に直結し、
+顧客の信頼を直接損なう**。人間のレビューでは絶対に検出できないので、
+ここを機械のゲートにしておく。
+
+#### 手元での実行
+
+```bash
+uv run python tests/pptx_check.py     # 構造検証（要ブラウザ）
+uv run python tests/smoke_test.py     # API配線（ブラウザ不要）
+```
+
 ### ② アドホック要求 → Cloud Run Service（任意・min-instances=0）
 
 ```bash

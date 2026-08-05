@@ -1,0 +1,86 @@
+# GitHub push -> Cloud Build -> Artifact Registry -> Cloud Run Jobs
+#
+# トリガー作成時にサービスアカウントの明示指定が必須（Compute Engine既定SAには
+# Cloud Build Service Account ロールが含まれないため）。詳細は README を参照。
+
+substitutions:
+  _REGION: asia-northeast1
+  _REPO: md2pptx                 # Artifact Registry のリポジトリ名
+  _JOB: md2pptx-batch            # Cloud Run Jobs のジョブ名
+  _RUNTIME_SA: ""                # ジョブ実行時のSA（空なら既定SA）
+  _MANIFEST: ""                  # gs://bucket/nightly/manifest.jsonl
+  _OUT_PREFIX: ""                # gs://bucket/decks
+  _TASKS: "4"
+  _CONCURRENCY: "4"
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY    # ユーザー指定SAで実行する場合は必須
+  dynamicSubstitutions: true
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:latest
+
+timeout: 1800s
+
+steps:
+  # 1. ビルド（前回のlatestをキャッシュに使う。初回は無いのでtrueで無視する）
+  - id: pull-cache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:latest || true
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:latest
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:latest
+      - .
+
+  # 2. 構造検証をイメージの中で実行する。
+  #    ブラウザバックエンドで走るので、コンテナ内のフォント解決も同時に検証される。
+  #    ここで落ちたらデプロイしない（PowerPointが「修復が必要」と言う成果物を防ぐ）
+  - id: test
+    name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --rm
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:${SHORT_SHA}
+      - python
+      - tests/pptx_check.py
+
+  # 3. push（imagesでも押されるが、deployより先に必要なので明示する）
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: [push, --all-tags,
+           "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx"]
+
+  # 4. Cloud Run Jobs を更新（存在しなければ作成される）
+  - id: deploy-job
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        ARGS=(
+          "${_JOB}"
+          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:${SHORT_SHA}
+          --region=${_REGION}
+          --command=python --args=job.py
+          --memory=2Gi --cpu=2
+          --tasks=${_TASKS}
+          --task-timeout=30m
+          --max-retries=2
+          --set-env-vars=MANIFEST=${_MANIFEST},OUT_PREFIX=${_OUT_PREFIX},CONCURRENCY=${_CONCURRENCY}
+        )
+        if [ -n "${_RUNTIME_SA}" ]; then ARGS+=("--service-account=${_RUNTIME_SA}"); fi
+        gcloud run jobs deploy "${ARGS[@]}"
