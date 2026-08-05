@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+
+# 生成物（中間表現・成果物は成果物置き場へ）
+*.pptx
+*.pdf
+*.jpg
+*.png
+deck.html
+layout.json
+batch-out/
+out/

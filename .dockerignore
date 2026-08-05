@@ -1,0 +1,9 @@
+.git
+__pycache__
+*.pyc
+*.pptx
+*.pdf
+*.jpg
+deck.html
+layout.json
+.venv
