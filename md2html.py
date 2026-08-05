@@ -22,6 +22,7 @@ import sys
 
 import yaml
 
+import chart_svg
 import theme as theme_mod
 
 
@@ -96,15 +97,16 @@ def render_table(rows):
             f"<thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table>")
 
 
-def render_chart(spec_text):
+def render_chart(spec_text, T):
     spec = yaml.safe_load(spec_text)
     attr = html_mod.escape(json.dumps(spec, ensure_ascii=False), quote=True)
-    # canvas はプレビュー用の使い捨て。PPTX側は data-chart の数値だけを見る
+    # 中のSVGはプレビュー用の使い捨て。PPTX側は data-chart の数値だけを見る。
+    # 実測されるのは外側のdivの矩形だけなので、中身の描画は成果物に影響しない
     return (f'<div data-pptx="chart" data-chart="{attr}">'
-            f'<canvas class="preview"></canvas></div>')
+            f'{chart_svg.render(spec, T)}</div>')
 
 
-def render_slide(lines):
+def render_slide(lines, T):
     out, buf_list, buf_tbl, buf_chart = [], [], [], None
     title = ""
 
@@ -121,7 +123,7 @@ def render_slide(lines):
         s = line.strip()
         if buf_chart is not None:
             if s == "```":
-                out.append(render_chart("\n".join(buf_chart)))
+                out.append(render_chart("\n".join(buf_chart), T))
                 buf_chart = None
             else:
                 buf_chart.append(line)
@@ -150,7 +152,7 @@ def render_slide(lines):
 
 
 def to_html(markdown, T):
-    body = "\n".join(render_slide(s) for s in parse_slides(markdown))
+    body = "\n".join(render_slide(s, T) for s in parse_slides(markdown))
     return f"<!doctype html><meta charset='utf-8'><style>{css(T)}</style>\n{body}"
 
 
