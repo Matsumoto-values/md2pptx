@@ -324,9 +324,32 @@ Chromium入りイメージは2GB前後あり、起動の大半はプロセス起
 {"id":"globex","markdown_uri":"gs://bucket/src/globex.md","theme_id":"globex"}
 ```
 
+`examples/manifest.jsonl` は全件成功する正常系。
+`examples/manifest-failures.jsonl` はデータ起因の失敗を混ぜた異常系テスト用。
+
 - **1件の失敗は他を巻き込まない**（`asyncio.gather(return_exceptions=True)` で集計）
-- 失敗が1件でもあればプロセスは非ゼロで終了し、Cloud Run Jobs がそのタスクを再実行する
 - ログは Cloud Logging 向けに `{"severity":..., "message":...}` のJSON1行形式
+
+### 失敗の分類と終了コード
+
+| 種別 | 例 | 終了コード | Cloud Run Jobs の挙動 |
+|---|---|---|---|
+| **データ起因** | テーマ名の誤り、参照先mdの不在、```chart のYAML構文エラー | **0** | リトライしない |
+| **環境起因** | ブラウザの異常終了、GCSの書き込み失敗、OOM | **1** | `--max-retries` に従い再実行 |
+
+リトライしても直らない失敗を非ゼロ終了で扱うと、**絶対に成功しない処理を
+繰り返して実行全体が失敗扱いになる**（実測: 5件中1件のデータ不備で、
+成功分が25秒で終わっているのに全体が73秒に延び、うち48秒が無駄なリトライだった）。
+
+判定できない例外は **env に倒す**。環境起因を誤って data と判定すると、
+デッキが黙って生成されないまま正常終了してしまうため。
+
+失敗は `OUT_PREFIX/_failures/<task_index>.jsonl` に記録される。
+監視はこのファイルか成果物の件数で組む。
+
+```jsonc
+{"id":"acme","kind":"data","error":"DataError","message":"theme: unknown theme: xxx"}
+```
 
 ## ローカル検証
 
