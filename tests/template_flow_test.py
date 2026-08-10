@@ -117,7 +117,27 @@ def main():
         check(r.json()["status"] == "published", "v1は発行済みのまま",
               r.json()["status"])
 
-        # 6. 受入検査
+        # 6. プレビュー（LibreOfficeが無い環境では503で退避する設計）
+        import preview as pv
+        r = c.get("/tenants/acme/templates/corp/preview", params={"pages": 2})
+        if pv.available():
+            ok = r.status_code == 200 and r.json()["pages"] >= 1
+            check(ok, "プレビュー画像を返す",
+                  f"{r.json().get('pages')}枚" if ok else str(r.status_code))
+            if ok:
+                r2 = c.get("/tenants/acme/templates/corp/preview", params={"page": 1})
+                check(r2.headers["content-type"] == "image/png", "単一PNGも返せる")
+                # 2回目はキャッシュに当たること
+                r3 = c.get("/tenants/acme/templates/corp/preview", params={"pages": 2})
+                check(r3.json()["cached"] is True, "2回目はキャッシュに当たる")
+        else:
+            check(r.status_code == 503, "LibreOffice未導入なら503で返す",
+                  str(r.status_code))
+        r = c.post("/tenants/acme/templates/corp/preview/html")
+        check(r.status_code == 200 and "data-pptx" in r.text,
+              "HTMLプレビューは常に返せる")
+
+        # 7. 受入検査
         r = c.post("/tenants/acme/templates", data={"template_id": "bad"},
                    files={"file": ("x.pptx", b"not a zip", "application/octet-stream")})
         check(r.status_code == 400, "壊れたファイルを弾く", str(r.status_code))
