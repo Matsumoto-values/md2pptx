@@ -50,12 +50,17 @@ steps:
   #    ここで落ちたらデプロイしない（PowerPointが「修復が必要」と言う成果物を防ぐ）
   - id: test
     name: gcr.io/cloud-builders/docker
+    entrypoint: bash
     args:
-      - run
-      - --rm
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:${SHORT_SHA}
-      - python
-      - tests/pptx_check.py
+      - -c
+      - |
+        set -e
+        IMG=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:${SHORT_SHA}
+        # 構造検証（XMLの要素順序・溢れ・フォント解決）
+        docker run --rm "$IMG" python tests/pptx_check.py
+        # テンプレート登録 -> 発行 -> 生成の一連の流れ
+        docker run --rm -e TEMPLATE_ROOT=/tmp/tstore "$IMG" \
+          python tests/template_flow_test.py
 
   # 3. push（imagesでも押されるが、deployより先に必要なので明示する）
   - id: push
