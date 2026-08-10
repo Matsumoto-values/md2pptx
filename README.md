@@ -148,6 +148,64 @@ build_pptx.py   座標JSON → pptx            （build）
 }
 ```
 
+## 会社テンプレートを適用する
+
+既存の会社資料をベースに開き、マスター/レイアウトの装飾・ロゴ・フッタを継承する。
+配色・フォント・余白はテンプレートから実測抽出する。
+
+```bash
+cp /path/to/corp.pptx templates/corp.pptx
+python3 tools/pptx2theme.py templates/corp.pptx > themes/corp.json
+# 出力をレビューして調整（特に font がLinux側で解決できるか）
+
+python3 md2html.py deck.md corp > deck.html
+python3 extract.py deck.html corp > layout.json     # テーマ指定を忘れないこと
+python3 build_pptx.py layout.json out.pptx corp
+```
+
+API/バッチからは `theme_id: "corp"` を指定するだけ。
+
+### 継承されるもの / されないもの
+
+| | 状況 |
+|---|---|
+| 背景・ロゴ・装飾・フッタ・ページ番号 | ○ マスター/レイアウトから自動で乗る |
+| スライドサイズ | ○ テンプレート側を正とする |
+| 配色・フォント・余白 | △ 実測抽出してテーマJSONにする（人間のレビュー前提） |
+| プレースホルダ | 削除する（全要素を絶対配置するため。`strip_placeholders`） |
+| アウトライン表示・「リセット」 | × 絶対配置なのでプレースホルダを使わない |
+
+### 抽出の設計（実資料3件で検証済み）
+
+- **テーマ部品は読まない**。3件すべて Office 既定のまま放置されており、
+  ブランドデザインは図形の直接書式に入っていた
+- **配色はデザイン層（マスター＋使用中レイアウト）を優先**。スライド側から採ると
+  注釈の赤やコンテンツの色を拾う
+- **レイアウトは実スライドの使用頻度で選ぶ**。プレースホルダ数や並び順で選ぶと
+  セクション表紙が当たる
+- **全マスターを走査する**。`prs.slide_layouts` は先頭マスターの分しか返さない
+- **フォントはCJK比率で判定**。`run.font.name` はラテン用指定を返すため、
+  日本語資料でも `Arial` 等が最頻出になる
+
+### フォントが用意できない場合
+
+字幅互換の代替があれば `font_stack` に入れて計測に使い、`font`（pptxに書く名前）は
+元のフォント名のままにする。これで**手元にフォントが無くても座標が信用できる**。
+
+| テンプレートの指定 | 計測に使う代替 | 必要なパッケージ |
+|---|---|---|
+| Arial / Helvetica | Liberation Sans | `fonts-liberation` |
+| Times New Roman | Liberation Serif | `fonts-liberation` |
+| Calibri | Carlito | `fonts-crosextra-carlito` |
+| **日本語フォント全般** | **互換なし** | — |
+
+日本語フォントには字幅互換の代替が存在しない。`Meiryo UI` 等が指定されている場合、
+`extract.py` が警告を出すので、フォントを導入するかテーマの `font` を
+BIZ UDPGothic に変えるかを人間が判断する。
+
+**顧客資料と、そこから生成したテーマはリポジトリに含めない**（`.gitignore` 済み）。
+匿名サンプルは `themes/example-corporate.json`。
+
 ## デプロイ（2形態・同一イメージ）
 
 ### ① 夜間バッチ → Cloud Run Jobs（主用途）

@@ -1,0 +1,22 @@
+{
+  "_note": "会社テンプレート適用の匿名サンプル。tools/pptx2theme.py の出力を人間がレビューした形。実資料から生成したものは .gitignore で除外される",
+  "_font_warning": "'Arial' は字幅互換の 'Liberation Sans' で計測する。Linux側に fonts-liberation が必要",
+
+  "base_pptx": "templates/example.pptx",
+  "base_layout": "CONTENT",
+  "strip_placeholders": true,
+
+  "canvas": { "w": 960, "h": 540, "slide_in": [10.0, 5.625] },
+
+  "font": "Arial",
+  "font_stack": ["Liberation Sans", "Arial", "BIZ UDPGothic", "Noto Sans CJK JP", "sans-serif"],
+
+  "palette": ["2E7D5B", "1F5540", "A8D5BF", "D98324", "6B4E9E"],
+  "text": "1A1A1A",
+  "heading": "1A1A1A",
+
+  "margin": { "x": 29, "top": 87, "body_top": 165 },
+
+  "table": { "header_bg": "2E7D5B", "header_fg": "FFFFFF" },
+  "flow": { "box_border": "2E7D5B", "cap_color": "2E7D5B" }
+}

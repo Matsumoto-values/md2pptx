@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """extract.py -- HTMLをChromiumで描画し、レイアウト中間表現(JSON)を吐く.
 
-CLI : extract.py deck.html > layout.json
+CLI : extract.py deck.html [theme_id] > layout.json
 API : await extract(browser, html, canvas) -> dict
 
 ブラウザに折り返し計算をやらせるのがこのツールの存在意義。
@@ -173,7 +173,9 @@ class BrowserPool:
 async def main():
     html = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
     import theme as theme_mod
-    T = theme_mod.load()
+    # テーマを渡さないと viewport と font が既定値になり、md2html側と食い違って
+    # px->EMU 換算が二重にスケールする
+    T = theme_mod.load(sys.argv[2] if len(sys.argv) > 2 else "default")
     pool = BrowserPool()
     await pool.start()
     try:

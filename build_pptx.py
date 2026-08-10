@@ -24,6 +24,9 @@ from pptx.util import Emu, Inches, Pt
 
 import theme as theme_mod
 
+ROOT = pathlib.Path(__file__).resolve().parent
+BLANK_HINTS = ("blank", "白紙")
+
 ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT,
          "justify": PP_ALIGN.JUSTIFY, "start": PP_ALIGN.LEFT, "end": PP_ALIGN.RIGHT}
 CHART_TYPE = {
@@ -273,15 +276,86 @@ DISPATCH = {"title": add_text, "text": add_text, "list": add_text,
             "raster": add_raster, "table": add_table, "chart": add_chart}
 
 
-def build(layout, out, T):
-    w_in, h_in = T["canvas"]["slide_in"]
-    px = Inches(w_in) / layout["canvas"][0]      # 1 CSS px あたりの EMU
+def clear_slides(prs):
+    """既存スライドを全削除する.
 
-    prs = Presentation()
-    prs.slide_width, prs.slide_height = Inches(w_in), Inches(h_in)
-    blank = prs.slide_layouts[6]
+    python-pptx に削除APIが無いので sldIdLst と関連付けを直接操作する。
+    サンプル資料をベースに使う場合これが無いと、既存の何十枚かの後ろに
+    生成分が追記されてしまう。
+    """
+    lst = prs.slides._sldIdLst
+    for sldId in list(lst):
+        prs.part.drop_rel(sldId.rId)
+        lst.remove(sldId)
+
+
+def pick_layout(prs, name):
+    """レイアウトを名前で選ぶ。添字での決め打ちはテンプレート次第で破綻する.
+
+    prs.slide_layouts は先頭マスターの分しか返さないため全マスターを見る。
+    マスターが複数ある資料(Google Slides由来など)では、実際に多用されている
+    レイアウトが2番目以降のマスターにいることがある。
+    """
+    layouts = [lo for m in prs.slide_masters for lo in m.slide_layouts]
+    if name:
+        for lo in layouts:
+            if lo.name == name:
+                return lo
+        print(f"WARNING: layout '{name}' not found; falling back", file=sys.stderr)
+    for lo in layouts:
+        if any(h in (lo.name or "").lower() for h in BLANK_HINTS):
+            return lo
+    return layouts[6] if len(layouts) > 6 else layouts[-1]
+
+
+def open_base(T):
+    """テンプレートをベースに開く。指定が無ければ素の新規プレゼンテーション."""
+    base = T.get("base_pptx")
+    if not base:
+        prs = Presentation()
+        w_in, h_in = T["canvas"]["slide_in"]
+        prs.slide_width, prs.slide_height = Inches(w_in), Inches(h_in)
+        return prs
+    path = pathlib.Path(base)
+    if not path.is_absolute():
+        path = ROOT / path
+    if not path.is_file():
+        raise FileNotFoundError(f"base_pptx not found: {path}")
+    prs = Presentation(str(path))
+    clear_slides(prs)
+    # スライドサイズはテンプレート側が正。テーマの canvas と食い違う場合は警告する
+    tw, th = prs.slide_width // 9525, prs.slide_height // 9525
+    if (tw, th) != (T["canvas"]["w"], T["canvas"]["h"]):
+        print(f"WARNING: canvas {T['canvas']['w']}x{T['canvas']['h']} != "
+              f"template {tw}x{th}; using template size", file=sys.stderr)
+    return prs
+
+
+def strip_placeholders(slide):
+    """継承した空のプレースホルダを削除する.
+
+    全要素を絶対配置するのでプレースホルダは使わない。空のまま残すと
+    編集時にプロンプト枠が表示される。
+    """
+    for ph in list(slide.placeholders):
+        ph._element.getparent().remove(ph._element)
+
+
+def build(layout, out, T):
+    prs = open_base(T)
+    # md2html(CSS) と extract(viewport) が同じキャンバスを見ているかを確認する。
+    # ここが食い違うと px->EMU が二重スケールして全体がズレる
+    if layout["canvas"][0] != T["canvas"]["w"]:
+        print(f"WARNING: layout canvas {layout['canvas'][0]}px != theme canvas "
+              f"{T['canvas']['w']}px; extract側にテーマを渡し忘れていない?",
+              file=sys.stderr)
+    # px -> EMU はテンプレートの実寸から算出する(テーマの値ではなく実物が正)
+    px = prs.slide_width / layout["canvas"][0]
+    blank = pick_layout(prs, T.get("base_layout"))
     for s in layout["slides"]:
         slide = prs.slides.add_slide(blank)
+        if T.get("strip_placeholders", True):
+            strip_placeholders(slide)
         # コネクタは接続先の図形が必要なので2パスにする
         nodes, connectors = {}, []
         for e in s["elements"]:
