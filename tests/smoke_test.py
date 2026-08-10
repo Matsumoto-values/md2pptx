@@ -62,24 +62,47 @@ def main():
     return 1 if fails else 0
 
 
-def batch_check():
-    """job.py を別プロセスで走らせ、1件失敗しても他が完走することを確認する."""
-    import shutil
+def run_job(manifest, out):
     import subprocess
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "job.py")], cwd=ROOT, capture_output=True,
+        env={**os.environ, "EXTRACT_BACKEND": "stub",
+             "MANIFEST": str(ROOT / manifest), "OUT_PREFIX": out})
+    return r.returncode
+
+
+def batch_check():
+    """終了コードの分類を検証する.
+
+    データ起因(リトライ無意味)は正常終了し、環境起因だけ非ゼロで終わること。
+    ここを間違えると、絶対に成功しない処理をCloud Run Jobsが繰り返す。
+    """
+    import shutil
     import tempfile
-    out = tempfile.mkdtemp()
+    fails, out = [], tempfile.mkdtemp()
     try:
-        r = subprocess.run(
-            [sys.executable, str(ROOT / "job.py")], cwd=ROOT, capture_output=True,
-            env={**os.environ, "EXTRACT_BACKEND": "stub",
-                 "MANIFEST": str(ROOT / "examples/manifest.jsonl"),
-                 "OUT_PREFIX": out})
-        made = sorted(p.name for p in pathlib.Path(out).glob("*.pptx"))
-        # manifestには意図的に失敗する1件が入っているので exit=1 が正常
-        ok = r.returncode == 1 and len(made) == 4
-        print("batch    ", f"exit={r.returncode}", f"{len(made)} files", made,
-              "OK" if ok else "NG")
-        return [] if ok else ["batch"]
+        # 1. 全件成功 -> exit 0
+        code = run_job("examples/manifest.jsonl", out + "/ok")
+        made = len(list(pathlib.Path(out + "/ok").glob("*.pptx")))
+        ok = code == 0 and made == 4
+        print("batch ok  ", f"exit={code}", f"{made} files", "OK" if ok else "NG")
+        fails += [] if ok else ["batch-ok"]
+
+        # 2. データ起因の失敗のみ -> exit 0 + 記録が残る
+        code = run_job("examples/manifest-failures.jsonl", out + "/data")
+        made = len(list(pathlib.Path(out + "/data").glob("*.pptx")))
+        rec = pathlib.Path(out + "/data/_failures/0.jsonl")
+        ok = code == 0 and made == 4 and rec.is_file() and "data" in rec.read_text()
+        print("batch data", f"exit={code}", f"{made} files",
+              f"failures={rec.is_file()}", "OK" if ok else "NG")
+        fails += [] if ok else ["batch-data"]
+
+        # 3. 環境起因の失敗 -> exit 1 (Cloud Run Jobsにリトライさせる)
+        code = run_job("examples/manifest.jsonl", "/proc/nowrite")
+        ok = code == 1
+        print("batch env ", f"exit={code}", "(1期待)", "OK" if ok else "NG")
+        fails += [] if ok else ["batch-env"]
+        return fails
     finally:
         shutil.rmtree(out, ignore_errors=True)
 
