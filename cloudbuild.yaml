@@ -48,6 +48,10 @@ steps:
   # 2. 構造検証をイメージの中で実行する。
   #    ブラウザバックエンドで走るので、コンテナ内のフォント解決も同時に検証される。
   #    ここで落ちたらデプロイしない（PowerPointが「修復が必要」と言う成果物を防ぐ）
+  # 注意: cloudbuild.yaml 内の $VAR は Cloud Build の置換変数として先に解釈される。
+  # シェル変数として渡すには $$VAR とエスケープする（$IMG のままだと
+  # "key in the template IMG is not a valid built-in substitution" で
+  # ビルド作成時点で失敗する）
   - id: test
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
@@ -57,9 +61,9 @@ steps:
         set -e
         IMG=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:${SHORT_SHA}
         # 構造検証（XMLの要素順序・溢れ・フォント解決）
-        docker run --rm "$IMG" python tests/pptx_check.py
+        docker run --rm "$$IMG" python tests/pptx_check.py
         # テンプレート登録 -> 発行 -> 生成 -> プレビュー画像の一連の流れ
-        docker run --rm -e TEMPLATE_ROOT=/tmp/tstore "$IMG" \
+        docker run --rm -e TEMPLATE_ROOT=/tmp/tstore "$$IMG" \
           python tests/template_flow_test.py
 
   # 3. push（imagesでも押されるが、deployより先に必要なので明示する）
@@ -88,4 +92,4 @@ steps:
           --set-env-vars=MANIFEST=${_MANIFEST},OUT_PREFIX=${_OUT_PREFIX},CONCURRENCY=${_CONCURRENCY}
         )
         if [ -n "${_RUNTIME_SA}" ]; then ARGS+=("--service-account=${_RUNTIME_SA}"); fi
-        gcloud run jobs deploy "${ARGS[@]}"
+        gcloud run jobs deploy "$${ARGS[@]}"
