@@ -76,6 +76,13 @@ def is_brandish(h):
     return s >= MIN_SAT and v >= MIN_VAL
 
 
+def luminance(h):
+    """相対輝度。白文字が乗せられるかの判定に使う."""
+    r, g, b = (v / 255 for v in rgb_of(h))
+    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4  # noqa: E731
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+
 def far_enough(h, chosen):
     a = rgb_of(h)
     return all(sum((a[i] - rgb_of(c)[i]) ** 2 for i in range(3)) ** 0.5 > COLOR_DIST
@@ -185,20 +192,36 @@ def collect(prs):
     return fills, fcolors, fonts, lefts, rights, tops
 
 
+def rank_primary(colors):
+    """主色の候補を並べ替える.
+
+    蛍光ペン的な明るい色(FFFF00, CCFFFF など)が先頭に来ると、表ヘッダに
+    白文字を乗せた時に読めなくなる。彩度が高く輝度が中程度の色を優先する。
+    実資料で FFFF00 や FFFFCC が主色になるケースを確認したため。
+    """
+    def score(h):
+        _, sat, _ = hsv_of(h)
+        lum = luminance(h)
+        # 輝度0.25付近を理想として離れるほど減点、彩度は加点
+        return sat * 1.5 - abs(lum - 0.25) * 2
+    return sorted(colors, key=score, reverse=True)
+
+
 def pick_palette(design_area, slide_fills):
     """デザイン層の色を先頭に置き、足りない分をスライド側から補う.
 
     先頭の色は表のヘッダ・フロー図の枠線・グラフ第1系列に使われるので、
     ブランドの主色が来るべき場所。
     """
-    out = []
-    for src in (design_area.most_common(), slide_fills.most_common()):
+    design, extra = [], []
+    for src, bucket in ((design_area.most_common(), design),
+                        (slide_fills.most_common(), extra)):
         for h, _ in src:
-            if is_brandish(h) and far_enough(h, out):
-                out.append(h)
-            if len(out) >= 5:
-                return out
-    return out or ["4C6FFF"]
+            if is_brandish(h) and far_enough(h, design + extra):
+                bucket.append(h)
+    # デザイン層の色を優先し、その中で主色になるべきものを先頭へ
+    out = rank_primary(design) + extra
+    return out[:5] or ["4C6FFF"]
 
 
 def pick_layout(prs):
@@ -225,8 +248,13 @@ def percentile(xs, q):
     return xs[min(len(xs) - 1, int(len(xs) * q))]
 
 
-def build(src):
-    prs = Presentation(str(src))
+def build(src, source_name=None):
+    """src はパスでもファイルライクでも可（アップロードされたバイト列を直接渡せる）."""
+    prs = Presentation(src if hasattr(src, "read") else str(src))
+    stem = (pathlib.Path(source_name or str(src)).stem
+            if not hasattr(src, "read") or source_name else "template")
+    label = pathlib.Path(source_name).name if source_name else (
+        pathlib.Path(str(src)).name if not hasattr(src, "read") else "uploaded.pptx")
     fills, fcolors, fonts, lefts, rights, tops = collect(prs)
     W, H = prs.slide_width // 9525, prs.slide_height // 9525
     used = {s.slide_layout.name for s in prs.slides}
@@ -251,10 +279,10 @@ def build(src):
 
     stack, warn = font_stack_for(font)
     return {
-        "_source": pathlib.Path(src).name,
+        "_source": label,
         "_note": "実測抽出。人間のレビュー前提",
         "_font_warning": warn,
-        "base_pptx": f"templates/{pathlib.Path(src).stem}.pptx",
+        "base_pptx": f"templates/{stem}.pptx",
         "base_layout": pick_layout(prs),
         "canvas": {"w": W, "h": H,
                    "slide_in": [round(prs.slide_width / 914400, 3),
@@ -265,7 +293,9 @@ def build(src):
         "text": text,
         "heading": text,
         "margin": {"x": left, "top": title_top, "body_top": body_top},
-        "table": {"header_bg": palette[0], "header_fg": "FFFFFF"},
+        # ヘッダ文字色は背景の輝度で決める。明るい背景に白文字だと読めない
+        "table": {"header_bg": palette[0],
+                  "header_fg": "FFFFFF" if luminance(palette[0]) < 0.45 else text},
         "flow": {"box_border": palette[0], "cap_color": palette[0]},
     }, (fills, fonts, prs, d_area.most_common(4))
 

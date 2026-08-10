@@ -31,7 +31,11 @@ def unesc(t):
 def badge_png(text, w, h, T):
     img = Image.new("RGB", (w * 2, h * 2))
     d = ImageDraw.Draw(img)
-    a, b = (tuple(int(T["palette"][n][i:i + 2], 16) for i in (0, 2, 4)) for n in (0, 1))
+    # パレットが1色のテーマは実際に存在する（デザイン層に1色しかない資料）ので
+    # 2色目が無い場合は同色を使う
+    pal = T["palette"]
+    a, b = (tuple(int(pal[min(n, len(pal) - 1)][i:i + 2], 16) for i in (0, 2, 4))
+            for n in (0, 1))
     for i in range(w * 2):
         r = i / (w * 2)
         d.line([(i, 0), (i, h * 2)],
