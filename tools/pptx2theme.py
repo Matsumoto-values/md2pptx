@@ -17,8 +17,13 @@ import json
 import pathlib
 import sys
 
+import lxml.etree as etree
 from pptx import Presentation
 from pptx.enum.dml import MSO_FILL
+
+NS = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+REL_THEME = ("http://schemas.openxmlformats.org/officeDocument/2006/"
+             "relationships/theme")
 
 # 無彩色(白・黒・グレー)はブランド色ではないので候補から外す。
 # 明度の上限は設けない: FFC000のような明度1.0の色は正当なブランド色であり、
@@ -155,8 +160,41 @@ def pick_font(fonts, cjk):
     return ranked[0]
 
 
-def collect(prs):
+def theme_fonts(prs):
+    """テーマのフォント定義を読む -> {"+mn-ea": "ＭＳ Ｐゴシック", ...}
+
+    **色はテーマ部品から採らない**（Office既定のまま放置されているため）が、
+    フォント参照の解決にはテーマ部品が必要。実資料で run のフォント名が
+    `+mn-ea` のようなテーマ参照になっているケースがあり、そのままでは
+    フォント名として使えない。
+    """
+    out = {}
+    try:
+        blob = prs.slide_masters[0].part.part_related_by(REL_THEME).blob
+        x = etree.fromstring(blob)
+    except Exception:          # noqa: BLE001 テーマが辿れない資料もある
+        return out
+    for kind, prefix in (("majorFont", "+mj"), ("minorFont", "+mn")):
+        node = x.find(f".//a:{kind}", NS)
+        if node is None:
+            continue
+        latin = node.find("a:latin", NS)
+        latin = latin.get("typeface") if latin is not None else None
+        ea = node.find("a:ea", NS)
+        ea = ea.get("typeface") if ea is not None else None
+        jpan = [f.get("typeface") for f in node.findall("a:font", NS)
+                if f.get("script") == "Jpan"]
+        # ea が空文字のことが多いので Jpan の指定を優先して拾う
+        east = (jpan[0] if jpan else None) or ea or latin
+        out[f"{prefix}-ea"] = east
+        out[f"{prefix}-lt"] = latin or east
+        out[f"{prefix}-cs"] = latin or east
+    return {k: v for k, v in out.items() if v}
+
+
+def collect(prs, refs=None):
     """図形の塗り・文字色・フォント・内容領域を実測で集計する."""
+    refs = refs or {}
     fills = collections.Counter()
     fcolors = collections.Counter()
     fonts = collections.Counter()
@@ -175,8 +213,11 @@ def collect(prs):
                 continue
             for para in sh.text_frame.paragraphs:
                 for r in para.runs:
-                    if r.font.name:
-                        fonts[r.font.name] += len(r.text)
+                    name = r.font.name
+                    if name and name.startswith("+"):
+                        name = refs.get(name)          # テーマ参照を実名へ
+                    if name:
+                        fonts[name] += len(r.text)
                     try:
                         if str(r.font.color.type).startswith("RGB"):
                             fcolors[str(r.font.color.rgb)] += len(r.text)
@@ -235,7 +276,10 @@ def pick_layout(prs):
     """
     used = collections.Counter(s.slide_layout.name for s in prs.slides)
     if used:
-        return used.most_common(1)[0][0]
+        # 使用頻度が同数のことがある（実データで4対4を確認）。
+        # その場合は図形が多い＝装飾を持っているレイアウトを選ぶ
+        shapes = {lo.name: len(lo.shapes) for lo in all_layouts(prs)}
+        return max(used.items(), key=lambda kv: (kv[1], shapes.get(kv[0], 0)))[0]
     scored = sorted((not any(h in (lo.name or "").lower() for h in LAYOUT_HINTS),
                      len(lo.placeholders), lo.name) for lo in all_layouts(prs))
     return scored[0][2] if scored else None
@@ -255,7 +299,8 @@ def build(src, source_name=None):
             if not hasattr(src, "read") or source_name else "template")
     label = pathlib.Path(source_name).name if source_name else (
         pathlib.Path(str(src)).name if not hasattr(src, "read") else "uploaded.pptx")
-    fills, fcolors, fonts, lefts, rights, tops = collect(prs)
+    refs = theme_fonts(prs)
+    fills, fcolors, fonts, lefts, rights, tops = collect(prs, refs)
     W, H = prs.slide_width // 9525, prs.slide_height // 9525
     used = {s.slide_layout.name for s in prs.slides}
     d_cnt, d_area = design_layer_fills(prs, used)
@@ -265,6 +310,8 @@ def build(src, source_name=None):
     dark = [c for c, _ in fcolors.most_common() if hsv_of(c)[2] < 0.5]
     text = dark[0] if dark else "333333"
     font = pick_font(fonts, cjk_ratio(prs))
+    if font.startswith("+"):                  # 解決できなかった場合の保険
+        font = refs.get(font) or JP_FALLBACK
 
     def clamp(v, lo, hi, default):
         return default if v is None else max(lo, min(hi, v))
