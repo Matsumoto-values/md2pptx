@@ -253,9 +253,10 @@ def add_chart(slide, e, px, T):
         dl.position = (XL_LABEL_POSITION.INSIDE_END if ctype in STACKED
                        else XL_LABEL_POSITION.OUTSIDE_END)
 
-    for ser, color in zip(chart.series, T["palette"]):
+    pal = T["palette"]
+    for i, ser in enumerate(chart.series):      # 系列数がパレットより多い場合は循環
         ser.format.fill.solid()
-        ser.format.fill.fore_color.rgb = RGBColor.from_string(color)
+        ser.format.fill.fore_color.rgb = RGBColor.from_string(pal[i % len(pal)])
 
     chart.has_legend = len(chart.series) > 1 and cfg["legend"] not in (None, "none")
     if chart.has_legend:

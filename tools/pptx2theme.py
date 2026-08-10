@@ -225,8 +225,13 @@ def percentile(xs, q):
     return xs[min(len(xs) - 1, int(len(xs) * q))]
 
 
-def build(src):
-    prs = Presentation(str(src))
+def build(src, source_name=None):
+    """src はパスでもファイルライクでも可（アップロードされたバイト列を直接渡せる）."""
+    prs = Presentation(src if hasattr(src, "read") else str(src))
+    stem = (pathlib.Path(source_name or str(src)).stem
+            if not hasattr(src, "read") or source_name else "template")
+    label = pathlib.Path(source_name).name if source_name else (
+        pathlib.Path(str(src)).name if not hasattr(src, "read") else "uploaded.pptx")
     fills, fcolors, fonts, lefts, rights, tops = collect(prs)
     W, H = prs.slide_width // 9525, prs.slide_height // 9525
     used = {s.slide_layout.name for s in prs.slides}
@@ -251,10 +256,10 @@ def build(src):
 
     stack, warn = font_stack_for(font)
     return {
-        "_source": pathlib.Path(src).name,
+        "_source": label,
         "_note": "実測抽出。人間のレビュー前提",
         "_font_warning": warn,
-        "base_pptx": f"templates/{pathlib.Path(src).stem}.pptx",
+        "base_pptx": f"templates/{stem}.pptx",
         "base_layout": pick_layout(prs),
         "canvas": {"w": W, "h": H,
                    "slide_in": [round(prs.slide_width / 914400, 3),

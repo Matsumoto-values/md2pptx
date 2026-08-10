@@ -206,6 +206,61 @@ BIZ UDPGothic に変えるかを人間が判断する。
 **顧客資料と、そこから生成したテーマはリポジトリに含めない**（`.gitignore` 済み）。
 匿名サンプルは `themes/example-corporate.json`。
 
+## テンプレートの登録（マルチテナント）
+
+会社ごとにテンプレートを登録し、後日それを使って何度でも生成する運用向け。
+**登録は稀・対話的・人間のレビューあり**、**生成は頻繁・自動**。性質が違うので処理を分ける。
+
+```
+POST /tenants/{tenant_id}/templates            登録（draftとして保存）
+GET  /tenants/{tenant_id}/templates            一覧
+GET  /tenants/{tenant_id}/templates/{id}       取得（?version=1 で固定）
+POST /tenants/{tenant_id}/templates/{id}/publish?version=1   発行
+POST /render {markdown, tenant_id, template_id[, template_version]}
+```
+
+```bash
+curl -X POST http://localhost:8080/tenants/acme/templates \
+  -F template_id=corp -F name=コーポレート -F file=@corp.pptx
+```
+
+### 登録時の処理
+
+1. **受入検査**（サイズ・zip爆弾・マクロ・IDの形式）— 顧客のアップロードは信用できない入力
+2. **元スライドからデザイントークンを実測抽出** — 色・フォント・余白はスライドから測るので
+   ベース化より必ず先に行う
+3. **ベース化: スライドを全削除** — マスターとレイアウトだけ残せばデザインは完全に再現できる。
+   **顧客の機密スライドを保存しない**（実測で64〜96%の容量削減にもなる）
+4. **フォント解決の判定を確定させる** — SaaSでは利用者がサーバーにフォントを入れられない。
+   生成のたびに警告が出る状態にせず、登録時に人間へ提示する
+5. draft として保存
+
+### フォント判定の4状態
+
+| status | 意味 | 対応 |
+|---|---|---|
+| `ok` | 宣言フォントがそのまま使える | そのまま |
+| `substituted` | 字幅互換の代替で計測（Arial→Liberation Sans等） | そのまま。座標は信用できる |
+| `approximated` | 代替はあるが字幅が違う | 折り返しがズレ得る。要レビュー |
+| `unavailable` | 候補が全滅 | テーマの `font` を変更するか、フォントを導入する |
+
+### バージョニング
+
+**発行済みバージョンは書き換えない。** 過去に生成した資料を再現できるようにするため。
+再登録は常に新しいバージョンになり、`template_version` で固定指定できる。
+
+### 保管層の差し替え
+
+`TemplateStore` インターフェースに `LocalTemplateStore`（開発用）と
+`GcsTemplateStore` の2実装がある。`TEMPLATE_BUCKET` があればGCS、無ければローカル。
+
+millet_ms に組み込む際は、**メタデータをCloudSQL/Firestoreに移した実装を注入する**のが素直
+（一覧・検索・監査・会社テーブルとのFKが必要になるため）。ベースpptxはGCSのまま。
+`TemplateStore` を実装したクラスを差し込めばよく、他のモジュールは変更不要。
+
+ベースpptxは `materialize()` がプロセス内キャッシュ（内容ハッシュ）に展開する。
+バッチで同じテンプレートを何度も使うため、ダウンロードは1回で済む。
+
 ## デプロイ（2形態・同一イメージ）
 
 ### ① 夜間バッチ → Cloud Run Jobs（主用途）
@@ -320,8 +375,10 @@ Compute Engine の既定SAに変わっており、そこには Cloud Build Servi
 #### 手元での実行
 
 ```bash
-uv run python tests/pptx_check.py     # 構造検証（要ブラウザ）
-uv run python tests/smoke_test.py     # API配線（ブラウザ不要）
+uv run python tests/pptx_check.py            # 構造検証（要ブラウザ）
+uv run python tests/smoke_test.py            # API配線（ブラウザ不要）
+uv run python tests/template_flow_test.py    # 登録→発行→生成（ブラウザ不要）
+uv run python tests/template_flow_test.py templates/corp.pptx   # 実資料で確認
 ```
 
 ### ② アドホック要求 → Cloud Run Service（任意・min-instances=0）

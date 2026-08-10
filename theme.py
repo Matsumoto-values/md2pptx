@@ -60,12 +60,20 @@ def deep_merge(base, over):
     return out
 
 
+def normalize(T):
+    """テーマの最低保証。抽出由来のテーマは色数が足りないことがある."""
+    pal = [c for c in (T.get("palette") or []) if isinstance(c, str)]
+    T["palette"] = pal or list(DEFAULTS["palette"])
+    return T
+
+
 def load(theme_id="default", override=None):
     """themes/<id>.json を DEFAULTS に重ね、さらに override を重ねて返す."""
     path = THEMES_DIR / f"{theme_id}.json"
     if not path.is_file():
         raise FileNotFoundError(f"unknown theme: {theme_id}")
-    return deep_merge(deep_merge(DEFAULTS, json.loads(path.read_text())), override)
+    return normalize(
+        deep_merge(deep_merge(DEFAULTS, json.loads(path.read_text())), override))
 
 
 def available():
