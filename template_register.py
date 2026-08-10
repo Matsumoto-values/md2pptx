@@ -70,6 +70,23 @@ def fc_available(name):
     return name.split()[0].lower() in out.lower()
 
 
+def design_warning(assets):
+    """ベースに見た目を再現する材料が残っているかを判定する.
+
+    ロゴや背景がスライド側にしか無い資料では、ベースを使っても装飾は再現されない
+    （抽出した配色・余白だけが効く）。登録時に伝えないと
+    「テンプレートを登録したのに見た目が変わらない」という混乱になる。
+    """
+    if assets["media_count"] == 0 and assets["design_shapes"] < 8:
+        return ("このテンプレートはマスター/レイアウトに装飾がほとんど無い。"
+                "ロゴや背景が各スライドに直接置かれている資料と思われる。"
+                "配色・フォント・余白は適用されるが、ロゴ等は再現されない")
+    if assets["media_count"] == 0:
+        return ("マスター/レイアウトに画像がない（図形とテキストのみ）。"
+                "ロゴ画像が必要な場合はテンプレート側の作りを確認すること")
+    return None
+
+
 def register(data, tenant_id, template_id, store, *, name=None,
              keep_layout_only=False, available=fc_available):
     """-> (レコード, 登録レポート)"""
@@ -113,6 +130,8 @@ def register(data, tenant_id, template_id, store, *, name=None,
         "canvas": theme["canvas"],
         "layout": theme["base_layout"],
         "slides_removed": info["slides_removed"],
+        "assets": info["assets"],
+        "design_warning": design_warning(info["assets"]),
         "size": {"uploaded": info["bytes_before"], "base": info["bytes_after"]},
         "design_layer_colors": design,
         "fonts_found": fonts.most_common(4),

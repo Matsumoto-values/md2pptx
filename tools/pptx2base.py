@@ -29,6 +29,27 @@ PML_PRESENTATION = ("application/vnd.openxmlformats-officedocument"
                     ".presentationml.presentation.main+xml")
 
 
+# zipのタイムスタンプに現在時刻が入るため、同じ入力でも秒をまたぐとバイト列が変わり
+# 内容ハッシュによる重複排除が効かない。固定値で正規化する
+FIXED_DATE = (1980, 1, 1, 0, 0, 0)
+
+
+def repack_deterministic(data):
+    """同じ入力なら常に同じバイト列になるようzipを組み直す.
+
+    パートの順序は元のまま保つ（[Content_Types].xml が先頭である必要があるため）。
+    """
+    src = zipfile.ZipFile(io.BytesIO(data))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
+        for info in src.infolist():
+            zi = zipfile.ZipInfo(info.filename, date_time=FIXED_DATE)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = info.external_attr
+            out.writestr(zi, src.read(info.filename))
+    return buf.getvalue()
+
+
 class RejectedFile(Exception):
     """受入検査で弾いた入力。呼び出し側が4xxで返すことを想定する."""
 
@@ -108,6 +129,36 @@ def prune_layouts(prs, keep):
     return removed
 
 
+def design_assets(data):
+    """ベースに残っているデザイン資産を数える.
+
+    スライドを削除すると、スライドだけが参照していた画像は到達不能になり
+    保存対象から外れる（python-pptxはパートグラフを辿って保存するため）。
+    残るのはマスター/レイアウトが参照する画像 = ロゴ・透かし・背景。
+
+    ここが0件かつ図形も少ない場合、そのテンプレートは「デザインがスライド側に
+    しかない」ことを意味し、ベースを使っても見た目は再現されない。
+    登録時に人間へ伝える必要がある。
+    """
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    media = {n: zf.getinfo(n).file_size for n in zf.namelist()
+             if n.startswith("ppt/media/")}
+    # 埋め込みフォント。閲覧側の再現性には寄与するが容量を食う（実測10.5MBの例あり）。
+    # 難読化されているため描画側の計測には使えない
+    fonts = {n: zf.getinfo(n).file_size for n in zf.namelist()
+             if n.startswith("ppt/fonts/")}
+    prs = Presentation(io.BytesIO(data))
+    shapes = sum(len(m.shapes) for m in prs.slide_masters)
+    shapes += sum(len(lo.shapes) for m in prs.slide_masters for lo in m.slide_layouts)
+    return {"media_count": len(media), "media_bytes": sum(media.values()),
+            "embedded_font_count": len(fonts),
+            "embedded_font_bytes": sum(fonts.values()),
+            "design_shapes": shapes,
+            "largest": sorted(
+                ({"name": n, "bytes": z} for n, z in {**media, **fonts}.items()),
+                key=lambda x: -x["bytes"])[:3]}
+
+
 def to_base(data, keep_layout=None):
     """-> (base_pptx_bytes, info)"""
     _, names = validate(data)
@@ -127,9 +178,11 @@ def to_base(data, keep_layout=None):
     out = io.BytesIO()
     prs.save(out)
     info["bytes_after"] = out.tell()
-    info["layouts_after"] = sum(len(m.slide_layouts)
-                                for m in Presentation(io.BytesIO(out.getvalue())).slide_masters)
-    return out.getvalue(), info
+    base = repack_deterministic(out.getvalue())
+    info["layouts_after"] = sum(
+        len(m.slide_layouts) for m in Presentation(io.BytesIO(base)).slide_masters)
+    info["assets"] = design_assets(base)
+    return base, info
 
 
 def main():

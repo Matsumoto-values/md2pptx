@@ -14,6 +14,10 @@ millet_ms 側の永続化（CloudSQL / Firestore）に差し替えられるよ�
   theme       デザイントークン（dict）
   base        ベースpptx（マスター/レイアウトのみ。顧客のスライドは含まない）
 
+ベースの実体は**内容ハッシュで重複排除して保管する**。テンプレートは
+埋め込みフォントや高解像度のロゴで10〜20MBになることがあり、
+バージョンごとに丸ごと持つと無駄が大きい。中身が変わらない再登録では増えない。
+
 ベースpptxは python-pptx がローカルパスを要求するため、取得時に
 プロセス内キャッシュへ展開する。バッチで同じテンプレートを何度も使うので
 ダウンロードは1回で済ませる。
@@ -86,12 +90,20 @@ class LocalTemplateStore(TemplateStore):
         d = self.root / tenant_id / template_id
         return d / f"v{version}" if version else d
 
+    def _blob(self, digest):
+        return self.root / "_blobs" / f"{digest}.pptx"
+
     def save(self, tenant_id, template_id, version, theme, base_bytes, status="draft"):
         d = self._dir(tenant_id, template_id, version)
         d.mkdir(parents=True, exist_ok=True)
-        (d / "base.pptx").write_bytes(base_bytes)
+        digest = hashlib.sha256(base_bytes).hexdigest()
+        blob = self._blob(digest)
+        if not blob.is_file():                  # 同じ内容なら書かない
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            blob.write_bytes(base_bytes)
         meta = {"tenant_id": tenant_id, "template_id": template_id,
-                "version": version, "status": status, "theme": theme}
+                "version": version, "status": status, "theme": theme,
+                "base_sha256": digest, "base_bytes": len(base_bytes)}
         (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
         return {**meta, "base": base_bytes}
@@ -120,8 +132,7 @@ class LocalTemplateStore(TemplateStore):
                 raise TemplateNotFound(f"{tenant_id}/{template_id} v{version}")
             chosen = json.loads((self._dir(tenant_id, template_id, version) / "meta.json")
                                 .read_text(encoding="utf-8"))
-        base = (self._dir(tenant_id, template_id, chosen["version"]) / "base.pptx")
-        return {**chosen, "base": base.read_bytes()}
+        return {**chosen, "base": self._blob(chosen["base_sha256"]).read_bytes()}
 
     def list(self, tenant_id):
         d = self.root / tenant_id
@@ -166,10 +177,13 @@ class GcsTemplateStore(TemplateStore):
         return f"{self.prefix}/{tenant_id}/{template_id}/v{version}/{name}"
 
     def save(self, tenant_id, template_id, version, theme, base_bytes, status="draft"):
+        digest = hashlib.sha256(base_bytes).hexdigest()
         meta = {"tenant_id": tenant_id, "template_id": template_id,
-                "version": version, "status": status, "theme": theme}
-        self.bucket.blob(self._key(tenant_id, template_id, version, "base.pptx")) \
-            .upload_from_string(base_bytes)
+                "version": version, "status": status, "theme": theme,
+                "base_sha256": digest, "base_bytes": len(base_bytes)}
+        blob = self.bucket.blob(f"{self.prefix}/_blobs/{digest}.pptx")
+        if not blob.exists():                   # 同じ内容ならアップロードしない
+            blob.upload_from_string(base_bytes)
         self.bucket.blob(self._key(tenant_id, template_id, version, "meta.json")) \
             .upload_from_string(json.dumps(meta, ensure_ascii=False),
                                content_type="application/json")
@@ -198,8 +212,7 @@ class GcsTemplateStore(TemplateStore):
                 raise TemplateNotFound(f"{tenant_id}/{template_id} v{version}")
             chosen = match[0]
         base = self.bucket.blob(
-            self._key(tenant_id, template_id, chosen["version"], "base.pptx")
-        ).download_as_bytes()
+            f"{self.prefix}/_blobs/{chosen['base_sha256']}.pptx").download_as_bytes()
         return {**chosen, "base": base}
 
     def list(self, tenant_id):
