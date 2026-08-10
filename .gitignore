@@ -11,3 +11,13 @@ deck.html
 layout.json
 batch-out/
 out/
+
+# 顧客資料そのものはコミットしない
+templates/*
+!templates/.gitkeep
+
+# 実テンプレートから抽出したテーマは社名・ブランド色が入るため除外。
+# 匿名サンプル(example-*.json)と既定テーマだけを追跡する
+themes/*.json
+!themes/default.json
+!themes/example-*.json

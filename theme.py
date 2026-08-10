@@ -11,6 +11,16 @@ import pathlib
 THEMES_DIR = pathlib.Path(__file__).parent / "themes"
 
 DEFAULTS = {
+    # base_pptx: 会社テンプレート等をベースとして開く場合のパス(リポジトリ相対)。
+    #            マスター/レイアウトの装飾・ロゴ・フッタがそのまま継承される。
+    #            .potx は python-pptx が直接開けないので tools/potx2base.py で変換する。
+    # base_layout: 新規スライドに使うレイアウト名。添字での決め打ちは危険
+    #              (テンプレートごとに並び順が違う)
+    "base_pptx": None,
+    "base_layout": None,
+    # 継承したプレースホルダを削除する。全要素を絶対配置するため空のまま残ると
+    # 編集時に「クリックしてタイトルを入力」の枠が出て邪魔になる
+    "strip_placeholders": True,
     "canvas": {"w": 1280, "h": 720, "slide_in": [13.333, 7.5]},
     # font       : pptxに書き込むフォント名（＝閲覧者のPowerPointが探す名前）
     # font_stack : CSSに書くフォント指定（＝描画側で実際に使われるフォント）
