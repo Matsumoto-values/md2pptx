@@ -1,6 +1,10 @@
 # 実行時依存。厳密な固定は `uv pip compile requirements.txt -o requirements.lock` で行う
 fastapi>=0.115,<1.0
 python-multipart>=0.0.9,<1.0   # テンプレートのアップロード(multipart)に必要
+# CIがイメージ内で tests/template_flow_test.py を実行するため、
+# fastapi.testclient が要求する httpx を本番イメージにも含める。
+# (テスト専用にしてイメージから外すと、イメージ内でのAPI検証ができない)
+httpx>=0.27,<1.0
 uvicorn[standard]>=0.34,<1.0
 pydantic>=2.9,<3.0
 python-pptx>=1.0.2,<2.0

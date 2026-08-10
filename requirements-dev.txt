@@ -1,3 +1,3 @@
 -r requirements.txt
 
-httpx>=0.27,<1.0             # fastapi.testclient.TestClient が要求する
+# httpx は requirements.txt 側へ移動した（CIがイメージ内でTestClientを使うため）
