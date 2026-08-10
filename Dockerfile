@@ -6,8 +6,13 @@ FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
 # 描画側(ここ)と閲覧側(顧客のPowerPoint)で同じ物理フォントになる。
 # これによりブラウザの実測値がPowerPointでもそのまま通用する。
 # Noto CJK はフォールバック用（BIZ UDに無い字形の保険）。
+# libreoffice-impress + poppler-utils はテンプレート登録時のプレビュー
+# (pptx -> pdf -> png) に使う。HTMLプレビューではマスター側の装飾(ロゴ・バナー)が
+# 見えないため、実物のラスタライズが必要。
+# fonts-liberation はArial等の字幅互換代替(会社テンプレートのフォント対策)。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        fonts-morisawa-bizud-gothic fonts-noto-cjk \
+        fonts-morisawa-bizud-gothic fonts-noto-cjk fonts-liberation \
+        libreoffice-impress poppler-utils \
     && rm -rf /var/lib/apt/lists/* && fc-cache -f
 
 WORKDIR /app

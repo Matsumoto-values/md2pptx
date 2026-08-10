@@ -249,6 +249,29 @@ curl -X POST http://localhost:8080/tenants/acme/templates \
 **発行済みバージョンは書き換えない。** 過去に生成した資料を再現できるようにするため。
 再登録は常に新しいバージョンになり、`template_version` で固定指定できる。
 
+### 登録内容の確認（プレビュー）
+
+```
+GET  /tenants/{t}/templates/{id}/preview?version=1          JSON（data URLの配列）
+GET  /tenants/{t}/templates/{id}/preview?version=1&page=1    単一PNG（imgタグ用）
+POST /tenants/{t}/templates/{id}/preview/html                HTML
+```
+
+**HTMLプレビューだけでは不十分**。ロゴやバナーはベースpptxのマスター側にあり
+HTMLには存在しないため、「ロゴと本文が一緒にどう見えるか」「本文が装飾に
+被っていないか」は実物のpptxをラスタライズしないと確認できない。
+そのため `libreoffice-impress` と `poppler-utils` をイメージに入れている
+（pptx → pdf → png）。
+
+- サンプルデッキは3枚（タイトル/本文/箇条書き/表/グラフ/フロー図を網羅）
+- 所要時間の実測は **2.7〜3.6秒**（3枚・110dpi）。対話的な確認としては許容範囲
+- **ベースの内容とテーマの内容でキャッシュする**。テーマを編集して再確認する
+  使い方をするため、テーマもキーに含める（キャッシュヒットは即時）
+- LibreOfficeが無い環境では **503** を返す。UI側はHTMLプレビューへ退避する
+
+注意: soffice はpptx全体をPDFに変換するため、枚数が多いと遅い
+（67枚の資料で23.5秒）。プレビューが3枚固定なのはこのため。
+
 ### ロゴ・画像・フォントの扱い
 
 スライドを削除すると、python-pptx はパートグラフを辿って保存するため

@@ -24,10 +24,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
 
 import md2html
+import preview as preview_mod
 import template_store
 import theme as theme_mod
 from renderer import Renderer
@@ -141,6 +142,13 @@ async def upload_template(tenant_id: str, template_id: str = Form(...),
         raise HTTPException(400, str(e))
     log.info("template registered tenant=%s id=%s v=%s font=%s", tenant_id,
              template_id, report["version"], report["font"]["status"])
+    report["preview"] = {
+        "available": preview_mod.available(),
+        "url": f"/tenants/{tenant_id}/templates/{template_id}/preview"
+               f"?version={report['version']}",
+        "html_url": f"/tenants/{tenant_id}/templates/{template_id}/preview/html"
+                    f"?version={report['version']}",
+    }
     return report
 
 
@@ -166,6 +174,76 @@ async def publish_template(tenant_id: str, template_id: str, version: int):
         return await run_in_threadpool(store.publish, tenant_id, template_id, version)
     except template_store.TemplateNotFound as e:
         raise HTTPException(404, str(e))
+
+
+async def build_preview(tenant_id, template_id, version, pages, dpi):
+    """テンプレートを適用したサンプルデッキを画像化する.
+
+    HTMLプレビューでは装飾（ロゴ・バナー）が見えないため、実物のpptxを
+    ラスタライズする。テーマを編集して再確認する使い方をするので、
+    ベースの内容とテーマの内容でキャッシュする。
+    """
+    try:
+        rec = await run_in_threadpool(store.load, tenant_id, template_id, version)
+    except template_store.TemplateNotFound as e:
+        raise HTTPException(404, str(e))
+
+    T = theme_mod.normalize(theme_mod.deep_merge(theme_mod.DEFAULTS,
+                                                store.materialize(rec)))
+    key = preview_mod.cache_key(rec.get("base_sha256"), rec["theme"])
+    hit = await run_in_threadpool(preview_mod.cached, key)
+    if hit:
+        return T, hit, True
+
+    r = require_renderer()
+    data, _ = await r.render(preview_mod.SAMPLE_MD, T)
+    images = await run_in_threadpool(preview_mod.rasterize, data, pages, dpi)
+    await run_in_threadpool(preview_mod.store, key, images)
+    return T, images, False
+
+
+@app.get("/tenants/{tenant_id}/templates/{template_id}/preview")
+async def template_preview(tenant_id: str, template_id: str, version: str | None = None,
+                          pages: int = 3, dpi: int = 110, page: int | None = None):
+    """テンプレート適用時の見た目を画像で返す.
+
+    page を指定すると単一のPNGを直接返す（imgタグから参照しやすい）。
+    省略時はJSONでdata URLの配列を返す。
+    LibreOfficeが無い環境では 503 と理由を返すので、UI側はHTMLプレビューへ退避する。
+    """
+    import base64
+    try:
+        T, images, from_cache = await build_preview(
+            tenant_id, template_id, version, max(1, min(pages, 10)),
+            max(60, min(dpi, 200)))
+    except preview_mod.PreviewUnavailable as e:
+        raise HTTPException(503, f"preview unavailable: {e}")
+
+    if page is not None:
+        if not 1 <= page <= len(images):
+            raise HTTPException(404, "page out of range")
+        return Response(images[page - 1], media_type="image/png")
+    return {
+        "pages": len(images),
+        "cached": from_cache,
+        "font": {"declared": T.get("font"), "status": T.get("font_status")},
+        "warnings": [w for w in (T.get("_font_warning"),) if w],
+        "images": [f"data:image/png;base64,{base64.b64encode(b).decode()}"
+                   for b in images],
+    }
+
+
+@app.post("/tenants/{tenant_id}/templates/{template_id}/preview/html",
+          response_class=HTMLResponse)
+async def template_preview_html(tenant_id: str, template_id: str,
+                                version: str | None = None):
+    """HTMLプレビュー。装飾は含まれないが、配色・余白・折り返しの確認には使える."""
+    try:
+        rec = await run_in_threadpool(store.load, tenant_id, template_id, version)
+    except template_store.TemplateNotFound as e:
+        raise HTTPException(404, str(e))
+    T = theme_mod.normalize(theme_mod.deep_merge(theme_mod.DEFAULTS, rec["theme"]))
+    return md2html.to_html(preview_mod.SAMPLE_MD, T)
 
 
 @app.get("/themes")

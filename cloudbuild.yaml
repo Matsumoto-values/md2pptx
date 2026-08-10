@@ -58,7 +58,7 @@ steps:
         IMG=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/md2pptx:${SHORT_SHA}
         # 構造検証（XMLの要素順序・溢れ・フォント解決）
         docker run --rm "$IMG" python tests/pptx_check.py
-        # テンプレート登録 -> 発行 -> 生成の一連の流れ
+        # テンプレート登録 -> 発行 -> 生成 -> プレビュー画像の一連の流れ
         docker run --rm -e TEMPLATE_ROOT=/tmp/tstore "$IMG" \
           python tests/template_flow_test.py
 
