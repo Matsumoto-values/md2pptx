@@ -34,7 +34,15 @@ DEFAULTS = {
     "heading": "1B1B1F",
     "grid": "E6E6E6",
     "axis": "CCCCCC",
-    "margin": {"x": 80, "top": 64, "body_top": 170},
+    # bottom: 下端に確保する余白（フッタやロゴに被らないため）
+    # distribute: 本文の縦方向の配り方。
+    #   flex-start = 上寄せ / space-evenly = 領域内に均等配置
+    "margin": {"x": 80, "top": 64, "body_top": 170, "bottom": 40,
+               "distribute": "space-evenly"},
+    # タイトルの枠。テンプレートによっては上部のヘッダ帯の中に置く設計なので、
+    # 高さを持たせて縦中央に寄せる（帯の高さに合わせるため）
+    "title": {"h": 56, "size": 44},
+    "body": {"text": 22, "list": 24, "table": 20},
     "table": {"header_bg": "1B1B1F", "header_fg": "FFFFFF", "row_bg": "FFFFFF",
               "row_alt_bg": "F5F6F8", "border": "DDDDDD", "border_w": 1,
               "pad": [12, 16, 12, 16], "zebra": True},

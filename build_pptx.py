@@ -37,6 +37,21 @@ CHART_TYPE = {
     "pie": XL_CHART_TYPE.PIE,
 }
 STACKED = {"column_stacked"}
+BAR_LIKE = {"column", "column_stacked", "bar"}      # gapWidth を持てるのはこれだけ
+
+# データラベルの位置はグラフ種ごとに許される値が違う。
+# 不正な値を書くとPowerPointが「修復が必要」と言ってファイルを開けない。
+#   棒(クラスタ) : ctr / inEnd / inBase / outEnd
+#   棒(積み上げ) : ctr / inEnd / inBase   ← outEnd は不正
+#   折れ線       : ctr / l / r / t / b     ← outEnd は不正
+#   円           : bestFit / ctr / inEnd / outEnd
+LABEL_POS = {
+    "column": XL_LABEL_POSITION.OUTSIDE_END,
+    "bar": XL_LABEL_POSITION.OUTSIDE_END,
+    "column_stacked": XL_LABEL_POSITION.INSIDE_END,
+    "line": XL_LABEL_POSITION.ABOVE,
+    "pie": XL_LABEL_POSITION.BEST_FIT,
+}
 LEGEND_POS = {"bottom": XL_LEGEND_POSITION.BOTTOM, "top": XL_LEGEND_POSITION.TOP,
               "right": XL_LEGEND_POSITION.RIGHT, "left": XL_LEGEND_POSITION.LEFT}
 LN_TAGS = ("a:lnL", "a:lnR", "a:lnT", "a:lnB")   # tcPr内での正しい出現順
@@ -102,7 +117,11 @@ def style_run(run, e, T):
     f = run.font
     f.size = Pt(e["size"] * 0.75)          # CSS px -> pt (96dpi -> 72pt)
     f.bold = e.get("bold", False)
-    f.name = e.get("font") or T["font"]
+    # **計測に使ったフォント名ではなく theme.font を書く。**
+    # font_stack の先頭は字幅互換の代替(Liberation Sans等)で、閲覧側のWindowsには
+    # 存在しないことが多い。宣言すべきは元のフォント名(Arial等)。
+    # 「Arialと宣言しつつLiberation Sansで測る」のがこの設計の目的
+    f.name = T["font"]
     f.color.rgb = rgb(e.get("color"))
 
 
@@ -113,7 +132,9 @@ def box(e, px):
 def add_text(slide, e, px, T):
     tf = slide.shapes.add_textbox(*box(e, px)).text_frame
     tf.word_wrap = True
-    tf.vertical_anchor = MSO_ANCHOR.TOP
+    # ブラウザ側で縦中央に寄せている要素は同じにする（ヘッダ帯の中のタイトル等）
+    tf.vertical_anchor = (MSO_ANCHOR.MIDDLE if e.get("valign") == "middle"
+                          else MSO_ANCHOR.TOP)
     tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
     for i, line in enumerate((e.get("text") or "").split("\n")):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
@@ -241,22 +262,32 @@ def add_chart(slide, e, px, T):
     chart.font.size = Pt(12)
     chart.font.color.rgb = rgb(f"#{T['text']}")
     plot = chart.plots[0]
-    plot.vary_by_categories = False        # 単系列が虹色になる悲劇を防ぐ
-    if ctype != "pie":
+    # 円グラフは系列が1つでカテゴリごとに色を変える必要がある。
+    # それ以外で True にすると単系列が虹色になる
+    plot.vary_by_categories = (ctype == "pie")
+    if ctype in BAR_LIKE:                  # gapWidth は棒グラフ専用の要素
         plot.gap_width = cfg["gap_width"]
     plot.has_data_labels = cfg["data_labels"]
     if cfg["data_labels"]:
         dl = plot.data_labels
         dl.number_format = T["number_format"]
         dl.number_format_is_linked = False
-        # 積み上げで OUTSIDE_END は不正値 -> ファイルが壊れる
-        dl.position = (XL_LABEL_POSITION.INSIDE_END if ctype in STACKED
-                       else XL_LABEL_POSITION.OUTSIDE_END)
+        # ラベル位置はグラフ種ごとに許される値が違う。不正だとファイルが壊れる
+        dl.position = LABEL_POS.get(ctype, XL_LABEL_POSITION.CENTER)
 
     pal = T["palette"]
     for i, ser in enumerate(chart.series):      # 系列数がパレットより多い場合は循環
-        ser.format.fill.solid()
-        ser.format.fill.fore_color.rgb = RGBColor.from_string(pal[i % len(pal)])
+        color = RGBColor.from_string(pal[i % len(pal)])
+        if ctype == "line":
+            # 折れ線は塗りではなく線に色を付ける。マーカーも揃える
+            ser.format.line.color.rgb = color
+            ser.format.line.width = Pt(2.25)
+            ser.marker.format.fill.solid()
+            ser.marker.format.fill.fore_color.rgb = color
+            ser.marker.format.line.color.rgb = color
+        else:
+            ser.format.fill.solid()
+            ser.format.fill.fore_color.rgb = color
 
     chart.has_legend = len(chart.series) > 1 and cfg["legend"] not in (None, "none")
     if chart.has_legend:

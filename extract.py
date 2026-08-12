@@ -45,6 +45,10 @@ COLLECT_JS = """
       color: cs.color,
       bg: cs.backgroundColor,
       align: cs.textAlign,
+      // flexで縦中央に寄せている要素はPPTX側でも縦中央にする。
+      // これを拾わないと、枠だけ実測して中身が上寄せになる
+      valign: (cs.display.indexOf('flex') >= 0 && cs.alignItems === 'center')
+              ? 'middle' : 'top',
       lineHeight: px(cs.lineHeight) / (px(cs.fontSize) || 1),
       pad: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(px)
     };

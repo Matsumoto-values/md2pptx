@@ -192,6 +192,92 @@ def theme_fonts(prs):
     return {k: v for k, v in out.items() if v}
 
 
+def title_boxes(prs):
+    """実スライドからタイトルの位置・高さ・文字サイズを実測する.
+
+    タイトル位置を「本文位置からの計算値」で決めるのは誤り。
+    テンプレートには上部にヘッダ帯があり、タイトルはその中に置く設計のことが多い。
+    計算値だと帯の下に落ちて、帯が空のまま残る（実資料で確認）。
+
+    タイトル＝上部にあるテキスト図形のうち最も文字が大きいもの、として拾う。
+    プレースホルダが定義されていないテンプレートが多いため、実物から測るしかない。
+    """
+    H = prs.slide_height // 9525
+    rows = []
+    for sl in prs.slides:
+        best = None
+        for sh in sl.shapes:
+            if (not sh.has_text_frame or sh.top is None or sh.width is None
+                    or not sh.text_frame.text.strip()):
+                continue
+            top = sh.top // 9525
+            if top > H * 0.4:                 # 上部に無いものはタイトルではない
+                continue
+            size = 0
+            for para in sh.text_frame.paragraphs:
+                for r in para.runs:
+                    if r.font.size:
+                        size = max(size, r.font.size.pt)
+            if not size:
+                continue
+            cand = (size, top, sh.left // 9525, sh.height // 9525)
+            if best is None or cand[0] > best[0]:
+                best = cand
+        if best:
+            rows.append(best)
+    return rows
+
+
+def body_size(prs, H):
+    """本文の文字サイズを文字数で重み付けして実測する.
+
+    タイトルだけ実測して本文を固定値にすると、見出しと本文が同じ大きさになって
+    階層が崩れる（実資料でタイトル18pt・本文9.5ptなのに、生成物は
+    タイトル24px・本文22pxになった）。
+    単純な中央値ではなく文字数で重み付けするのは、注釈や凡例のような
+    短い小さな文字に引っ張られないようにするため。
+    """
+    rows = []
+    for sl in prs.slides:
+        for sh in sl.shapes:
+            if not sh.has_text_frame or sh.top is None:
+                continue
+            if sh.top // 9525 < H * 0.2:      # タイトル帯は除外
+                continue
+            for para in sh.text_frame.paragraphs:
+                for r in para.runs:
+                    if r.font.size and len(r.text.strip()) > 4:
+                        rows.append((r.font.size.pt, len(r.text)))
+    if not rows:
+        return None
+    rows.sort()
+    half = sum(n for _, n in rows) / 2
+    acc = 0
+    for pt, n in rows:
+        acc += n
+        if acc >= half:
+            return pt
+    return rows[-1][0]
+
+
+def footer_top(prs, H):
+    """フッタ・ロゴ・ページ番号の上端を実測する.
+
+    下端に確保すべき余白は固定値ではなくテンプレートごとに違う。
+    マスターとレイアウトの下部にある要素の上端がその境界になる。
+    """
+    tops = []
+    for m in prs.slide_masters:
+        for holder in [m] + list(m.slide_layouts):
+            for sh in holder.shapes:
+                if sh.top is None:
+                    continue
+                t = sh.top // 9525
+                if t > H * 0.75:
+                    tops.append(t)
+    return min(tops) if tops else None
+
+
 def collect(prs, refs=None):
     """図形の塗り・文字色・フォント・内容領域を実測で集計する."""
     refs = refs or {}
@@ -318,13 +404,48 @@ def build(src, source_name=None):
 
     # 実測はあくまで手がかり。画面外の図形や全画面背景などの外れ値が混ざるので
     # 常識的な範囲にクランプする。最終調整は人間がやる前提
+    titles = title_boxes(prs)
     left = clamp(percentile(lefts, 0.2), round(W * 0.03), round(W * 0.12),
                  round(W * 0.06))
+    if titles:
+        # タイトルの左端は本文と別に持つテンプレートがある
+        left = clamp(percentile([t[2] for t in titles], 0.5),
+                     round(W * 0.02), round(W * 0.12), left)
     body_top = clamp(percentile([t for t in tops if t >= H * 0.08], 0.3),
                      round(H * 0.15), round(H * 0.38), round(H * 0.24))
-    title_top = round(max(8, body_top - H * 0.145))
+    if titles:
+        # 実測値を使う。ヘッダ帯の中に置く設計だと y=0 付近になる
+        title_top = clamp(percentile([t[1] for t in titles], 0.5),
+                          0, round(H * 0.35), round(H * 0.09))
+        title_h = clamp(percentile([t[3] for t in titles], 0.5),
+                        round(H * 0.06), round(H * 0.2), round(H * 0.1))
+        title_size = clamp(percentile([t[0] for t in titles], 0.5), 12, 40, 24)
+    else:
+        title_top = round(max(8, body_top - H * 0.145))
+        title_h = round(H * 0.1)
+        title_size = 24
 
     stack, warn = font_stack_for(font)
+    # 実測値どうしの整合を取る。タイトルと本文の判定はそれぞれ独立に行うため、
+    # タイトルが本文より下に来る資料がある（実測で2件）。
+    # その場合はタイトルを上に、本文をタイトルの下へ寄せる
+    if title_top + title_h > body_top:
+        if title_top >= body_top:                 # 完全に逆転している
+            title_top = clamp(round(body_top - title_h - H * 0.02), 0,
+                              round(H * 0.35), 0)
+        body_top = clamp(round(title_top + title_h + H * 0.03),
+                         round(H * 0.12), round(H * 0.45), body_top)
+
+    # 本文サイズ。実測できない場合はタイトルとの比率で決める
+    bsize = body_size(prs, H)
+    # 元資料は文字を詰め込んでいることが多く、そのまま採ると小さすぎることがある。
+    # 忠実さと可読性の折衷として下限を設ける（14px = 10.5pt）。
+    # 元資料どおりにしたい場合はテーマの body を手で書き換える
+    body_px = clamp(round(bsize / 0.75) if bsize else None, 14, 30,
+                    max(14, round(title_size / 0.75 * 0.5)))
+    # 見出しと本文が同じ大きさにならないよう最低限の差をつける
+    title_px = max(round(title_size / 0.75), round(body_px * 1.4))
+
     return {
         "_source": label,
         "_note": "実測抽出。人間のレビュー前提",
@@ -339,7 +460,16 @@ def build(src, source_name=None):
         "palette": palette,
         "text": text,
         "heading": text,
-        "margin": {"x": left, "top": title_top, "body_top": body_top},
+        "margin": {"x": left, "top": title_top, "body_top": body_top,
+                   # フッタの実測位置から下端余白を決める（固定値だと下に偏る）
+                   "bottom": clamp(H - (footer_top(prs, H) or H), round(H * 0.03),
+                                   round(H * 0.18), round(H * 0.06)),
+                   "distribute": "space-evenly"},
+        # タイトルは実測した枠に縦中央で収める（ヘッダ帯に合わせるため）
+        "title": {"h": title_h, "size": title_px},
+        # 本文の文字サイズも実測する（固定値だと見出しとの階層が崩れる）
+        "body": {"text": body_px, "list": body_px,
+                 "table": max(11, round(body_px * 0.92))},
         # ヘッダ文字色は背景の輝度で決める。明るい背景に白文字だと読めない
         "table": {"header_bg": palette[0],
                   "header_fg": "FFFFFF" if luminance(palette[0]) < 0.45 else text},

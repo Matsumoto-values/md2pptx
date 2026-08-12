@@ -91,8 +91,8 @@ def extract_stub(html, canvas, T):
                      color=f"#{T['heading']}" if kind == "title"
                            else (f"#{T['text']}" if kind != "raster" else "#FFFFFF"))
             if kind == "title":
-                e.update(x=m["x"], y=m["top"], w=width, h=round(size * lh),
-                         text=unesc(inner))
+                e.update(x=m["x"], y=m["top"], w=width,
+                         h=T["title"]["h"], valign="middle", text=unesc(inner))
             elif kind == "table":
                 e.update(build_table(inner, y, T, width)); y += e["h"] + 18
             elif kind == "chart":

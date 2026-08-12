@@ -29,6 +29,33 @@ from renderer import Renderer      # noqa: E402
 
 NS = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main",
       "p": "http://schemas.openxmlformats.org/presentationml/2006/main"}
+CNS = {"c": "http://schemas.openxmlformats.org/drawingml/2006/chart"}
+# グラフ種ごとにOOXMLで許される要素・属性が違う。1種類しか試していないと
+# 他の種類の不正値を見逃す（実際にlineChartのdLblPos=outEndで
+# PowerPointが「修復が必要」と言う不具合を出した）
+CHART_TYPES = ["column", "column_stacked", "bar", "line", "pie"]
+
+# 各グラフ種で許されるデータラベル位置
+VALID_LABEL_POS = {
+    "barChart": {"ctr", "inEnd", "inBase", "outEnd"},
+    "lineChart": {"ctr", "l", "r", "t", "b"},
+    "pieChart": {"bestFit", "ctr", "inEnd", "outEnd"},
+}
+# その要素を持てるグラフ種
+ONLY_BAR = {"gapWidth", "overlap", "barDir"}
+
+
+def chart_md(kind):
+    return f"""# {kind}
+```chart
+type: {kind}
+categories: [A, B, C]
+series:
+  - {{name: 実績, values: [10, 20, 30]}}
+"""+ ("" if kind == "pie" else """  - {name: 目標, values: [12, 18, 33]}
+""") + "```\n"
+
+
 FLOW_MD = """# フロー
 ```flow
 before: 全案件を手作業でパワポ化している
@@ -42,6 +69,10 @@ def check(cond, label, detail=""):
     print(f"  {'PASS' if cond else 'FAIL'}  {label}{'  ' + detail if detail else ''}")
     if not cond:
         fails.append(label)
+
+
+def slide_xml_of(data, n=1):
+    return slide_xml(data, n)
 
 
 def slide_xml(data, n=1):
@@ -101,6 +132,40 @@ def check_flow(data):
         check(order and order[-1] == "tailEnd", "a:lnの要素順序", str(order))
 
 
+def check_chart_xml(data, kind):
+    """グラフXMLに種類として不正な要素・属性が入っていないかを検査する.
+
+    積み上げ棒の outEnd、折れ線の outEnd、折れ線の gapWidth などは
+    PowerPointが「修復が必要」と言ってファイルを開けなくなる。
+    人間のレビューでは検出できないのでここで止める。
+    """
+    root = slide_xml_of(data)
+    z = zipfile.ZipFile(io.BytesIO(data))
+    names = [n for n in z.namelist() if n.startswith("ppt/charts/chart")]
+    check(bool(names), f"[{kind}] グラフパートがある")
+    for n in names:
+        x = etree.fromstring(z.read(n))
+        plot = x.find(".//c:plotArea", CNS)
+        groups = [e for e in plot if e.tag.split("}")[1].endswith("Chart")]
+        for g in groups:
+            tag = g.tag.split("}")[1]
+            children = [e.tag.split("}")[1] for e in g]
+            bad = [c for c in children if c in ONLY_BAR and tag != "barChart"]
+            check(not bad, f"[{kind}] {tag} に棒グラフ専用要素が無い", str(bad))
+            pos = g.find(".//c:dLbls/c:dLblPos", CNS)
+            if pos is not None:
+                allowed = VALID_LABEL_POS.get(tag, set())
+                check(pos.get("val") in allowed,
+                      f"[{kind}] {tag} のラベル位置が妥当",
+                      f"{pos.get('val')} (許容={sorted(allowed)})")
+            if tag == "barChart" and "grouping" in children:
+                grp = g.find("c:grouping", CNS).get("val")
+                if grp == "stacked":
+                    p2 = g.find(".//c:dLbls/c:dLblPos", CNS)
+                    check(p2 is None or p2.get("val") != "outEnd",
+                          f"[{kind}] 積み上げでoutEndを使っていない")
+
+
 async def main():
     T = theme_mod.load()
     backend = "browser"
@@ -111,6 +176,11 @@ async def main():
         check_layout(lay, T)
         data, _ = await r.render((ROOT / "examples/deck.md").read_text(encoding="utf-8"), T)
         check_deck(data, T)
+
+        print("[charts]")
+        for kind in CHART_TYPES:
+            data, _ = await r.render(chart_md(kind), T)
+            check_chart_xml(data, kind)
 
         print("[flow]")
         _, lay = await r.layout(FLOW_MD, T)

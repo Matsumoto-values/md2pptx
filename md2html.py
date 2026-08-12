@@ -31,6 +31,18 @@ def css(T):
     m = T["margin"]
     stack = ",".join(f"'{f}'" if " " in f else f for f in T["font_stack"])
     fl = T["flow"]
+    ti = T["title"]
+    bd = T["body"]
+    # タイトル枠の下端。本文領域はここから始める
+    title_bottom = m["top"] + ti["h"] + 12
+    # 本文に使える領域。グラフや図形のサイズを固定値にすると、
+    # 960x540 のような小さいキャンバスのテンプレートで溢れる
+    avail_w = c["w"] - m["x"] * 2
+    avail_h = c["h"] - m["body_top"] - 24          # 下端に少し余白を残す
+    chart_w = min(1000, avail_w)
+    chart_h = min(380, max(200, avail_h - 40))     # 説明文が入る余地を残す
+    box_max = min(fl["box_max_w"], round((avail_w - fl["gap"]) / 2))
+    box_vert = min(fl["box_w_vertical"], avail_w)
     var = "".join(f"--pal{i}:#{p};" for i, p in enumerate(T["palette"]))
     zebra = (f'[data-pptx="table"] tbody tr:nth-child(even) td '
              f'{{ background:#{tb["row_alt_bg"]}; }}') if tb["zebra"] else ""
@@ -40,19 +52,38 @@ def css(T):
 body {{ background:#4a4a4a; font-family:{stack}; }}
 .slide {{ position:relative; width:{c['w']}px; height:{c['h']}px;
   background:#fff; overflow:hidden; margin:0 auto 24px; }}
-.slide > .body {{ position:absolute; left:{m['x']}px; top:{m['body_top']}px;
-  width:{c['w'] - m['x'] * 2}px; }}
+/* 本文の縦位置。
+   body_top は「内容が多いときに本文が始まる位置」＝上限であって、
+   常にそこから始めると内容が少ないスライドで下が大きく余る（実測で使用率31%）。
+   かといって body_top 起点の領域で中央寄せすると、領域自体が下寄りなので
+   スライド全体としてはやはり下に偏る（実測: 領域中心332px vs 画面中心270px）。
+
+   そこで領域は「タイトルの下端」から「下端余白まで」を取り、その中で配分する。
+   これで内容が少なければ画面中央付近に、多ければ body_top 付近から始まる。 */
+.slide > .body {{ position:absolute; left:{m['x']}px;
+  top:{title_bottom}px; width:{c['w'] - m['x'] * 2}px;
+  height:{c['h'] - title_bottom - m['bottom']}px;
+  display:flex; flex-direction:column; justify-content:{m['distribute']};
+  /* 内容が多い場合に body_top より上に食い込まないようにする */
+  padding-top:{max(0, m['body_top'] - title_bottom)}px; }}
+.slide > .body.distribute {{ padding-top:0; }}
+/* 均等配置のときは要素個別の下マージンを消す（二重に効くため） */
+.slide > .body.distribute > * {{ margin-bottom:0; }}
 [data-pptx="title"] {{ position:absolute; left:{m['x']}px; top:{m['top']}px;
-  width:{c['w'] - m['x'] * 2}px;
-  font-size:44px; font-weight:700; color:var(--head); line-height:1.25; }}
-[data-pptx="text"] {{ font-size:22px; line-height:1.6; color:var(--text); margin-bottom:18px; }}
-[data-pptx="list"] {{ font-size:24px; line-height:1.7; color:var(--text); padding-left:1.2em; }}
+  width:{c['w'] - m['x'] * 2}px; height:{ti['h']}px;
+  display:flex; align-items:center;          /* 枠内で縦中央に置く */
+  font-size:{ti['size']}px; font-weight:700; color:var(--head);
+  line-height:1.25; }}
+[data-pptx="text"] {{ font-size:{bd['text']}px; line-height:1.6;
+  color:var(--text); margin-bottom:18px; }}
+[data-pptx="list"] {{ font-size:{bd['list']}px; line-height:1.7;
+  color:var(--text); padding-left:1.2em; }}
 [data-pptx="list"] li {{ margin-bottom:10px; }}
 [data-pptx="raster"] {{ display:inline-block; padding:16px 24px; border-radius:12px;
   background:linear-gradient(135deg,var(--pal0),var(--pal1));
-  color:#fff; font-size:20px; font-weight:700; }}
+  color:#fff; font-size:{max(12, bd['text'] - 2)}px; font-weight:700; }}
 [data-pptx="table"] {{ border-collapse:collapse; width:100%; margin-bottom:18px;
-  font-size:20px; color:var(--text); }}
+  font-size:{bd['table']}px; color:var(--text); }}
 [data-pptx="table"] th, [data-pptx="table"] td {{
   padding:{tb['pad'][0]}px {tb['pad'][1]}px {tb['pad'][2]}px {tb['pad'][3]}px;
   text-align:left; border:{tb['border_w']}px solid #{tb['border']}; }}
@@ -60,26 +91,30 @@ body {{ background:#4a4a4a; font-family:{stack}; }}
   font-weight:700; }}
 {zebra}
 [data-pptx="table"] td.num, [data-pptx="table"] th.num {{ text-align:right; }}
-[data-pptx="chart"] {{ width:1000px; height:380px; margin-bottom:18px; }}
+[data-pptx="chart"] {{ width:{chart_w}px; height:{chart_h}px; margin-bottom:18px; }}
 
 /* フローチャート: flexで並べてブラウザに寸法を測らせる。
    ボックスは中の文字量に応じて自動サイズになる（python-pptx直書きでは不可能な部分） */
-.flow {{ display:flex; align-items:stretch; margin-bottom:18px; }}
+/* ボックスは flex:1 で等幅にする。幅を各自に決めさせると、長い文のボックスだけ
+   伸びて中途半端な折り返し（最終行が1文字だけ等）になる */
+.flow {{ display:flex; align-items:stretch; margin-bottom:18px; gap:0; }}
 .flow-vertical {{ flex-direction:column; align-items:flex-start; }}
-[data-pptx="shape"] {{ display:flex; flex-direction:column; justify-content:center;
+[data-pptx="shape"] {{ flex:1 1 0; display:flex; flex-direction:column;
+  justify-content:center;
   padding:{fl['box_pad'][0]}px {fl['box_pad'][1]}px {fl['box_pad'][2]}px {fl['box_pad'][3]}px;
   border-radius:{fl['box_radius']}px; background:#{fl['box_bg']};
   border:{fl['box_border_w']}px solid #{fl['box_border']};
-  min-width:{fl['box_min_w']}px; max-width:{fl['box_max_w']}px; }}
-.flow-vertical [data-pptx="shape"] {{ width:{fl['box_w_vertical']}px; max-width:none; }}
+  min-width:0; max-width:{box_max}px; }}
+.flow-vertical [data-pptx="shape"] {{ flex:0 0 auto; width:{box_vert}px;
+  max-width:none; }}
 [data-pptx="shape"] .cap {{ font-size:{fl['cap_size']}px; font-weight:700;
   color:#{fl['cap_color']}; margin-bottom:4px; }}
-[data-pptx="shape"] .body {{ font-size:{fl['body_size']}px; line-height:1.5;
+[data-pptx="shape"] .body {{ font-size:{min(fl['body_size'], bd['list'])}px; line-height:1.5;
   color:var(--text); }}
 [data-pptx="connector"] {{ flex:0 0 {fl['gap']}px; display:flex;
   align-items:center; justify-content:center; }}
 .flow-vertical [data-pptx="connector"] {{ flex-basis:44px;
-  width:{fl['box_w_vertical']}px; }}
+  width:{box_vert}px; }}
 /* 菱形は内接矩形が小さいので余白を増やす。ブラウザ上の表示は矩形のままだが、
    PPTX側で菱形になった時に文字がはみ出さない寸法をここで確保する */
 .shape-diamond {{ padding:{fl['box_pad'][0] * 2}px {fl['box_pad'][1] * 2}px;
@@ -231,7 +266,10 @@ def render_slide(lines, T):
     flush()
 
     head = f'<h1 data-pptx="title">{html_mod.escape(title)}</h1>' if title else ""
-    return f'<section class="slide">{head}<div class="body">{"".join(out)}</div></section>'
+    # 均等配置のときは要素個別の下マージンを消すためクラスを付ける
+    cls = "body distribute" if T["margin"]["distribute"] != "flex-start" else "body"
+    return (f'<section class="slide">{head}'
+            f'<div class="{cls}">{"".join(out)}</div></section>')
 
 
 def to_html(markdown, T):
