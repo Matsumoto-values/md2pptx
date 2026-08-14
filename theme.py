@@ -43,6 +43,11 @@ DEFAULTS = {
     # 高さを持たせて縦中央に寄せる（帯の高さに合わせるため）
     "title": {"h": 56, "size": 44},
     "body": {"text": 22, "list": 24, "table": 20},
+    # 引用（インタビューの逐語）。左の色帯で引用であることを示す
+    "quote": {"bg": "F7F8FA", "bar": None,      # bar未指定ならpalette[0]を使う
+              "bar_w": 4, "pad": [14, 18, 14, 18],
+              "attr_size": None},               # 未指定なら本文の0.8倍
+
     "table": {"header_bg": "1B1B1F", "header_fg": "FFFFFF", "row_bg": "FFFFFF",
               "row_alt_bg": "F5F6F8", "border": "DDDDDD", "border_w": 1,
               "pad": [12, 16, 12, 16], "zebra": True},

@@ -81,6 +81,17 @@ COLLECT_JS = """
                  bold: px(cs.fontWeight) >= 600, color: cs.color,
                  lineHeight: px(cs.lineHeight) / (px(cs.fontSize) || 1) };
       });
+    } else if (kind === 'quote') {
+      // 発言と属性でフォントサイズ・色が違うので行ごとにスタイルを採る
+      const cs = getComputedStyle(el);
+      e.borderW = px(cs.borderLeftWidth);
+      e.borderColor = cs.borderLeftColor;
+      e.lines = [...el.querySelectorAll('.said,.attr')].map(n => {
+        const s2 = getComputedStyle(n);
+        return { text: n.innerText, size: px(s2.fontSize),
+                 bold: px(s2.fontWeight) >= 600, color: s2.color,
+                 lineHeight: px(s2.lineHeight) / (px(s2.fontSize) || 1) };
+      });
     } else if (kind === 'connector') {
       // 座標より「どの図形とどの図形を繋ぐか」が本質。PPTX側で接続して作り直す
       e.from = el.dataset.from;

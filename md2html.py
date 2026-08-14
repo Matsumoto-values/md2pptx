@@ -33,6 +33,9 @@ def css(T):
     fl = T["flow"]
     ti = T["title"]
     bd = T["body"]
+    q = T["quote"]
+    qbar = q["bar"] or T["palette"][0]
+    qattr = q["attr_size"] or max(10, round(bd["text"] * 0.8))
     # タイトル枠の下端。本文領域はここから始める
     title_bottom = m["top"] + ti["h"] + 12
     # 本文に使える領域。グラフや図形のサイズを固定値にすると、
@@ -92,6 +95,17 @@ body {{ background:#4a4a4a; font-family:{stack}; }}
 {zebra}
 [data-pptx="table"] td.num, [data-pptx="table"] th.num {{ text-align:right; }}
 [data-pptx="chart"] {{ width:{chart_w}px; height:{chart_h}px; margin-bottom:18px; }}
+
+/* 引用（逐語）。左の色帯で引用であることを示し、属性は小さく添える。
+   定性調査の資料では「生の声」が主役になるので独立した要素として扱う */
+[data-pptx="quote"] {{ display:flex; flex-direction:column; justify-content:center;
+  background:#{q['bg']}; border-left:{q['bar_w']}px solid #{qbar};
+  padding:{q['pad'][0]}px {q['pad'][1]}px {q['pad'][2]}px {q['pad'][3]}px;
+  margin-bottom:18px; }}
+[data-pptx="quote"] .said {{ font-size:{bd['text']}px; line-height:1.6;
+  color:var(--text); }}
+[data-pptx="quote"] .attr {{ font-size:{qattr}px; line-height:1.4;
+  color:#{qbar}; margin-top:6px; }}
 
 /* フローチャート: flexで並べてブラウザに寸法を測らせる。
    ボックスは中の文字量に応じて自動サイズになる（python-pptx直書きでは不可能な部分） */
@@ -156,8 +170,42 @@ def render_table(rows):
             f"<thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table>")
 
 
+class MarkdownError(ValueError):
+    """md の書き方が不正。呼び出し側はデータ起因の失敗として扱う."""
+
+
+CHART_TYPES = ("column", "column_stacked", "bar", "line", "pie")
+
+
+def validate_chart(spec):
+    """描画前に検証する。ここで弾かないと描画中にIndexError等で落ちる."""
+    if not isinstance(spec, dict):
+        raise MarkdownError("chart ブロックの形式が不正")
+    kind = spec.get("type", "column")
+    if kind not in CHART_TYPES:
+        raise MarkdownError(f"chart の type が不正: {kind!r} "
+                            f"(使えるのは {', '.join(CHART_TYPES)})")
+    cats = spec.get("categories")
+    series = spec.get("series")
+    if not cats or not series:
+        raise MarkdownError("chart には categories と series が必要")
+    for sr in series:
+        vals = (sr or {}).get("values")
+        if not vals:
+            raise MarkdownError(f"系列 {(sr or {}).get('name')!r} に values がない")
+        if len(vals) != len(cats):
+            raise MarkdownError(
+                f"系列 {(sr or {}).get('name')!r} の値が{len(vals)}個だが "
+                f"categories は{len(cats)}個。個数を揃えること")
+    return spec
+
+
 def render_chart(spec_text, T):
-    spec = yaml.safe_load(spec_text)
+    try:
+        spec = yaml.safe_load(spec_text)
+    except yaml.YAMLError as e:
+        raise MarkdownError(f"chart のYAMLが壊れている: {e}") from e
+    validate_chart(spec)
     attr = html_mod.escape(json.dumps(spec, ensure_ascii=False), quote=True)
     # 中のSVGはプレビュー用の使い捨て。PPTX側は data-chart の数値だけを見る。
     # 実測されるのは外側のdivの矩形だけなので、中身の描画は成果物に影響しない
@@ -200,6 +248,8 @@ def render_flow(spec_text, T):
         nodes.append((cap.strip(), body.strip(), shape) if body.strip()
                      else (None, cap.strip(), shape))
 
+    if len(nodes) < 2:
+        raise MarkdownError("flow は箱が2個以上必要")
     parts = []
     for i, (cap, body, shape) in enumerate(nodes):
         nid = f"n{i + 1}"
@@ -214,12 +264,32 @@ def render_flow(spec_text, T):
     return f'<div class="flow flow-{direction}">{"".join(parts)}</div>'
 
 
+def render_quote(said, attr, T):
+    """引用（逐語）を1要素として組む.
+
+    発言と属性（話者の情報）は意味的に一体なので1つの要素にする。
+    分けると配置が崩れるうえ、PPTX側で個別に動かされて対応が壊れる。
+    """
+    inner = f'<span class="said">{html_mod.escape(said)}</span>'
+    if attr:
+        inner += f'<span class="attr">{html_mod.escape(attr)}</span>'
+    return f'<div data-pptx="quote">{inner}</div>'
+
+
 def render_slide(lines, T):
     out, buf_list, buf_tbl, buf_chart = [], [], [], None
     buf_flow = None
+    buf_quote = None          # 直前が引用なら、続く "-- 属性" を取り込む
     title = ""
 
+    def flush_quote():
+        nonlocal buf_quote
+        if buf_quote is not None:
+            out.append(render_quote(buf_quote[0], buf_quote[1], T))
+            buf_quote = None
+
     def flush():
+        flush_quote()
         if buf_list:
             items = "".join(f"<li>{html_mod.escape(i)}</li>" for i in buf_list)
             out.append(f'<ul data-pptx="list">{items}</ul>')
@@ -254,6 +324,13 @@ def render_slide(lines, T):
             title = s[2:]
         elif s.startswith("|"):
             buf_tbl.append([c.strip() for c in s.strip("|").split("|")])
+        elif s.startswith(">"):
+            flush()
+            buf_quote = [s.lstrip("> ").strip(), None]
+        elif s.startswith("--") and buf_quote is not None:
+            # 引用の直後の "-- 話者" は属性として引用に取り込む
+            buf_quote[1] = s.lstrip("- ").strip()
+            flush_quote()
         elif s.startswith("- "):
             if buf_tbl: flush()
             buf_list.append(s[2:])

@@ -274,7 +274,10 @@ async def render(req: RenderRequest):
     if r.count_slides(req.markdown, T) > MAX_SLIDES:
         raise HTTPException(413, f"too many slides (max {MAX_SLIDES})")
 
-    data, n = await r.render(req.markdown, T)
+    try:
+        data, n = await r.render(req.markdown, T)
+    except md2html.MarkdownError as e:
+        raise HTTPException(400, f"markdown syntax: {e}")
     log.info("rid=%s slides=%d bytes=%d ms=%d", rid, n, len(data),
              (time.monotonic() - t0) * 1000)
 
