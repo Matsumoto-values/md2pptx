@@ -21,7 +21,8 @@ import theme as theme_mod
 
 SIZES = {"title": (44, 1.25, True), "text": (22, 1.6, False), "list": (24, 1.7, False),
          "raster": (20, 1.2, True), "table": (20, 1.4, False), "chart": (20, 1.2, False),
-         "shape": (20, 1.5, False), "connector": (20, 1.2, False)}
+         "shape": (20, 1.5, False), "connector": (20, 1.2, False),
+         "quote": (22, 1.6, False)}
 
 
 def unesc(t):
@@ -99,6 +100,26 @@ def extract_stub(html, canvas, T):
                 spec = json.loads(html_mod.unescape(
                     re.search(r'data-chart="(.*?)"', attrs, re.S).group(1)))
                 e.update(x=m["x"], y=y, w=1000, h=380, spec=spec); y += 398
+            elif kind == "quote":
+                qq = T["quote"]
+                said = re.search(r'class="said">(.*?)</span>', inner, re.S)
+                attr = re.search(r'class="attr">(.*?)</span>', inner, re.S)
+                lines = [dict(text=unesc(said.group(1)) if said else unesc(inner),
+                              size=T["body"]["text"], bold=False,
+                              color=f"#{T['text']}", lineHeight=1.6)]
+                if attr:
+                    lines.append(dict(text=unesc(attr.group(1)),
+                                      size=max(10, round(T["body"]["text"] * 0.8)),
+                                      bold=False,
+                                      color=f"#{qq['bar'] or T['palette'][0]}",
+                                      lineHeight=1.4))
+                h = sum(round(l["size"] * l["lineHeight"]) for l in lines) \
+                    + qq["pad"][0] + qq["pad"][2] + 6
+                e.update(x=m["x"], y=y, w=width, h=h, lines=lines,
+                         bg=f"#{qq['bg']}", pad=qq["pad"],
+                         borderW=qq["bar_w"],
+                         borderColor=f"#{qq['bar'] or T['palette'][0]}")
+                y += h + 18
             elif kind in ("shape", "connector"):
                 # 近似: 横並び固定。flowは実測前提の機能なのでstubでは配線確認のみ
                 fl = T["flow"]

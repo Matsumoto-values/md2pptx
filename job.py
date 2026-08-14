@@ -32,6 +32,7 @@ import time
 
 import yaml
 
+import md2html
 import theme as theme_mod
 from renderer import Renderer
 
@@ -129,8 +130,8 @@ async def one(renderer, item, sem):
         md, T = resolve_input(item)
         try:
             data, n = await renderer.render(md, T)
-        except yaml.YAMLError as e:
-            # ```chart ブロックのYAMLが壊れている = データ起因
+        except (yaml.YAMLError, md2html.MarkdownError) as e:
+            # mdの書き方が不正 = データ起因。リトライしても直らない
             raise DataError(f"markdown syntax: {e}") from e
         name = item.get("filename") or f"{ident}.pptx"
         uri = write(f"{OUT_PREFIX.rstrip('/')}/{name}", data,

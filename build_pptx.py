@@ -216,6 +216,49 @@ def add_autoshape(slide, e, px, T):
     return sh
 
 
+def add_quote(slide, e, px, T):
+    """引用（逐語）。背景の矩形と左端の色帯、その上にテキストを置く.
+
+    左の色帯は borderLeft の実測値から別図形として作る。
+    オートシェイプに「左だけ線」という指定は無いため。
+    図形は編集できるネイティブ要素として置く（画像化しない）。
+    """
+    box_shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, *box(e, px))
+    if is_transparent(e.get("bg")):
+        box_shape.fill.background()
+    else:
+        box_shape.fill.solid()
+        box_shape.fill.fore_color.rgb = rgb(e["bg"])
+    box_shape.line.fill.background()
+    box_shape.shadow.inherit = False          # 既定の影を消す
+
+    bw = e.get("borderW") or 0
+    if bw:
+        bar = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Emu(int(e["x"] * px)), Emu(int(e["y"] * px)),
+            Emu(int(bw * px)), Emu(int(e["h"] * px)))
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = rgb(e.get("borderColor"))
+        bar.line.fill.background()
+        bar.shadow.inherit = False
+
+    tf = box_shape.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    pad = e.get("pad") or [0, 0, 0, 0]
+    for attr, v in zip(("margin_top", "margin_right", "margin_bottom",
+                        "margin_left"), pad):
+        setattr(tf, attr, Emu(int(v * px)))
+    tf.margin_left = Emu(int((pad[3] + bw) * px))   # 色帯の分だけ内側へ寄せる
+    for i, ln in enumerate(e.get("lines") or []):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = PP_ALIGN.LEFT
+        p.line_spacing = ln.get("lineHeight") or 1.5
+        style_run(p.add_run(), {**e, **ln}, T)
+        p.runs[0].text = ln["text"]
+    return box_shape
+
+
 def add_flow_connector(slide, e, px, T, nodes):
     """図形に「接続」した矢印。接続しておくと、PowerPointで箱を動かしても追従する.
 
@@ -305,7 +348,8 @@ def add_chart(slide, e, px, T):
 
 
 DISPATCH = {"title": add_text, "text": add_text, "list": add_text,
-            "raster": add_raster, "table": add_table, "chart": add_chart}
+            "raster": add_raster, "table": add_table, "chart": add_chart,
+            "quote": add_quote}
 
 
 def clear_slides(prs):
